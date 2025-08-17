@@ -61,17 +61,17 @@ fun AddKeyfile(formData: FormData, onChange: (FormData) -> Unit) {
 
 
 @Composable
-fun CreateKeyfile() {
+fun NewKeyfile() {
     var showDialog by rememberSaveable { mutableStateOf(false) }
     Button(
         onClick = { showDialog = true }, modifier = Modifier.fillMaxWidth()
     ) {
-        Text("Create")
+        Text("New")
     }
     if (showDialog) {
         AlertDialog(
             onDismissRequest = { showDialog = false },
-            title = { Text(text = "Creating Keyfile") },
+            title = { Text(text = "Creating New Keyfile") },
             text = { Text(text = "The creation of keyfiles has not been implemented yet") },
             confirmButton = {
                 TextButton(onClick = { showDialog = false }) {
@@ -136,9 +136,11 @@ fun KeyfileCard(formData: FormData, onChange: (FormData) -> Unit) {
             ) {
                 AddKeyfile(formData) { onChange(it) }
                 if (formData.isEncrypt) {
-                    CreateKeyfile()
+                    NewKeyfile()
                 }
-                ClearKeyfiles(formData) { onChange(it) }
+                if (formData.keyfileFilenames.isNotEmpty()) {
+                    ClearKeyfiles(formData) { onChange(it) }
+                }
             }
             Column(
                 modifier = Modifier
