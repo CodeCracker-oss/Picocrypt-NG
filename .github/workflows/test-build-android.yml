@@ -1,0 +1,42 @@
+name: Test Android Build
+
+permissions:
+  contents: write
+
+on:
+  # Temporary triggers for PR testing
+  workflow_dispatch:
+  push:
+    branches:
+      - 'njhuffman/android-intro'
+  pull_request:
+    branches:
+      - 'njhuffman/android-intro'
+
+jobs:
+  build_apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Grant permission to gradlew
+        working-directory: ./android
+        run: chmod +x gradlew
+
+      - name: Build Debug APK
+        working-directory: ./android
+        run: ./gradlew assembleDebug
+
+      - name: Upload APK as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
