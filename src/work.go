@@ -1,16 +1,5 @@
 package main
 
-/*
-
-Picocrypt NG v2.00
-Copyright (c) Picocrypt NG developers
-Released under GPL-3.0-only
-https://github.com/Picocrypt-NG/Picocrypt-NG
-
-~ In cryptography we trust ~
-
-*/
-
 import (
 	"archive/zip"
 	"bytes"
@@ -19,10 +8,8 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"errors"
-	"flag"
 	"fmt"
 	"hash"
-	"image"
 	"image/color"
 	"io"
 	"math"
@@ -34,12 +21,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Picocrypt/dialog"
-	"github.com/Picocrypt/giu"
-	"github.com/Picocrypt/imgui-go"
 	"github.com/Picocrypt/infectious"
 	"github.com/Picocrypt/serpent"
-	"github.com/Picocrypt/zxcvbn-go"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/blake2b"
 	"golang.org/x/crypto/chacha20"
@@ -47,98 +30,95 @@ import (
 	"golang.org/x/crypto/sha3"
 )
 
-// Constants
+type WorkOptions struct {
+	mode            string
+	paranoid        bool
+	reedSolomon     bool
+	deniability     bool
+	recursively     bool
+	recombine       bool
+	compress        bool
+	split           bool
+	splitSize       string
+	splitSelected   int32
+	delete          bool
+	autoUnzip       bool
+	sameLevel       bool
+	keep            bool
+	kept            bool
+	password        string
+	confirmPassword string
+	keyfile         bool
+	keyfiles        []string
+	keyfileOrdered  bool
+	comments        string
+	inputFile       string
+	inputFileOld    string
+	outputFile      string
+	onlyFiles       []string
+	onlyFolders     []string
+	allFiles        []string
+	passgenLength   int32
+	passgenUpper    bool
+	passgenLower    bool
+	passgenNums     bool
+	passgenSymbols  bool
+	passgenCopy     bool
+}
+
+type ColorOptions = color.RGBA
+
+var (
+	WHITE       = ColorOptions{0xff, 0xff, 0xff, 0xff}
+	RED         = ColorOptions{0xff, 0x00, 0x00, 0xff}
+	GREEN       = ColorOptions{0x00, 0xff, 0x00, 0xff}
+	YELLOW      = ColorOptions{0xff, 0xff, 0x00, 0xff}
+	TRANSPARENT = ColorOptions{0x00, 0x00, 0x00, 0x00}
+)
+
+type workStatus struct {
+	popup             string
+	main              string
+	mainColor         ColorOptions
+	working           bool
+	progress          float32
+	progressInfo      string
+	speed             float64
+	eta               string
+	canCancel         bool
+	passwordHide      bool
+	showKeyfile       bool
+	keyfileLabel      string
+	showProgress      bool
+	startLabel        string
+	ready             string
+	inputLabel        string
+	showGenPassPopup  bool
+	passwordStrength  int
+	commentsLabel     string
+	scanning          bool
+	showOverwrite     bool
+	commentsDisabled  bool
+	requiredFreeSpace int64
+}
+
+// global state/status
+var status workStatus
+var state WorkOptions
+
+// constants
+var version = "v2.00"
+
 const KiB = 1 << 10
 const MiB = 1 << 20
 const GiB = 1 << 30
 const TiB = 1 << 40
 
-var WHITE = color.RGBA{0xff, 0xff, 0xff, 0xff}
-var RED = color.RGBA{0xff, 0x00, 0x00, 0xff}
-var GREEN = color.RGBA{0x00, 0xff, 0x00, 0xff}
-var YELLOW = color.RGBA{0xff, 0xff, 0x00, 0xff}
-var TRANSPARENT = color.RGBA{0x00, 0x00, 0x00, 0x00}
+const maxPasswordLen = 256
+const maxCommentLen = 256
+const maxSplitLen = 6
 
-// Generic variables
-var window *giu.MasterWindow
-var version = "v2.00"
-var dpi float32
-var mode string
-var working bool
-var scanning bool
-
-// Popup modals
-var modalId int
-var showPassgen bool
-var showKeyfile bool
-var showOverwrite bool
-var showProgress bool
-
-// Input and output files
-var inputFile string
-var inputFileOld string
-var outputFile string
-var onlyFiles []string
-var onlyFolders []string
-var allFiles []string
-var inputLabel = "Drop files and folders into this window"
-
-// Password and confirm password
-var password string
-var cpassword string
-var passwordStrength int
-var passwordState = giu.InputTextFlagsPassword
-var passwordStateLabel = "Show"
-
-// Password generator
-var passgenLength int32 = 32
-var passgenUpper bool
-var passgenLower bool
-var passgenNums bool
-var passgenSymbols bool
-var passgenCopy bool
-
-// Keyfile variables
-var keyfile bool
-var keyfiles []string
-var keyfileOrdered bool
-var keyfileLabel = "None selected"
-
-// Comments variables
-var comments string
-var commentsLabel = "Comments:"
-var commentsDisabled bool
-
-// Advanced options
-var paranoid bool
-var reedsolo bool
-var deniability bool
-var recursively bool
-var split bool
-var splitSize string
-var splitUnits = []string{"KiB", "MiB", "GiB", "TiB", "Total"}
-var splitSelected int32 = 1
-var recombine bool
-var compress bool
-var delete bool
-var autoUnzip bool
-var sameLevel bool
-var keep bool
-var kept bool
-
-// Status variables
-var startLabel = "Start"
-var mainStatus = "Ready"
-var mainStatusColor = WHITE
-var popupStatus string
-var requiredFreeSpace int64
-
-// Progress variables
-var progress float32
-var progressInfo string
-var speed float64
-var eta string
-var canCancel bool
+var splitUnits = []string{"KiB", "MiB", "GiB", "TiB"}
 
 // Reed-Solomon encoders
 var rs1, rsErr1 = infectious.NewFEC(1, 3)
@@ -160,18 +140,17 @@ type compressorProgress struct {
 }
 
 func (p *compressorProgress) Read(data []byte) (int, error) {
-	if !working {
+	if !status.working {
 		return 0, io.EOF
 	}
 	read, err := p.Reader.Read(data)
 	compressDone += int64(read)
-	progress, speed, eta = statify(compressDone, compressTotal, compressStart)
-	if compress {
-		popupStatus = fmt.Sprintf("Compressing at %.2f MiB/s (ETA: %s)", speed, eta)
+	status.progress, status.speed, status.eta = statify(compressDone, compressTotal, compressStart)
+	if state.compress {
+		status.popup = fmt.Sprintf("Compressing at %.2f MiB/s (ETA: %s)", status.speed, status.eta)
 	} else {
-		popupStatus = fmt.Sprintf("Combining at %.2f MiB/s (ETA: %s)", speed, eta)
+		status.popup = fmt.Sprintf("Combining at %.2f MiB/s (ETA: %s)", status.speed, status.eta)
 	}
-	giu.Update()
 	return read, err
 }
 
@@ -206,30 +185,28 @@ func (ezr *encryptedZipReader) Read(data []byte) (n int, err error) {
 
 func onClickStartButton() {
 	// Start button should be disabled if these conditions are true; don't do anything if so
-	if (len(keyfiles) == 0 && password == "") || (mode == "encrypt" && password != cpassword) {
+	if (len(state.keyfiles) == 0 && state.password == "") || (state.mode == "encrypt" && state.password != state.confirmPassword) {
 		return
 	}
 
-	if keyfile && keyfiles == nil {
-		mainStatus = "Please select your keyfiles"
-		mainStatusColor = RED
-		giu.Update()
+	if state.keyfile && state.keyfiles == nil {
+		status.main = "Please select your keyfiles"
+		status.mainColor = RED
 		return
 	}
-	tmp, err := strconv.Atoi(splitSize)
-	if split && (splitSize == "" || err != nil || tmp <= 0) {
-		mainStatus = "Invalid chunk size"
-		mainStatusColor = RED
-		giu.Update()
+	tmp, err := strconv.Atoi(state.splitSize)
+	if state.split && (state.splitSize == "" || err != nil || tmp <= 0) {
+		status.main = "Invalid chunk size"
+		status.mainColor = RED
 		return
 	}
 
 	// Check if output file already exists
-	_, err = os.Stat(outputFile)
+	_, err = os.Stat(state.outputFile)
 
 	// Check if any split chunks already exist
-	if split {
-		names, err2 := filepath.Glob(outputFile + ".*")
+	if state.split {
+		names, err2 := filepath.Glob(state.outputFile + ".*")
 		if err2 != nil {
 			panic(err2)
 		}
@@ -241,616 +218,80 @@ func onClickStartButton() {
 	}
 
 	// If files already exist, show the overwrite modal
-	if err == nil && !recursively {
-		showOverwrite = true
-		modalId++
-		giu.Update()
+	if err == nil && !state.recursively {
+		status.showOverwrite = true
 	} else { // Nothing to worry about, start working
-		showProgress = true
+		status.showProgress = true
 		fastDecode = true
-		canCancel = true
-		modalId++
-		giu.Update()
-		if !recursively {
+		status.canCancel = true
+		if !state.recursively {
 			go func() {
 				work()
-				working = false
-				showProgress = false
-				giu.Update()
+				status.working = false
+				status.showProgress = false
+
 			}()
 		} else {
 			// Store variables as they will be cleared
-			oldPassword := password
-			oldKeyfile := keyfile
-			oldKeyfiles := keyfiles
-			oldKeyfileOrdered := keyfileOrdered
-			oldKeyfileLabel := keyfileLabel
-			oldComments := comments
-			oldParanoid := paranoid
-			oldReedsolo := reedsolo
-			oldDeniability := deniability
-			oldSplit := split
-			oldSplitSize := splitSize
-			oldSplitSelected := splitSelected
-			oldDelete := delete
-			files := allFiles
+			oldPassword := state.password
+			oldKeyfile := state.keyfile
+			oldKeyfiles := state.keyfiles
+			oldKeyfileOrdered := state.keyfileOrdered
+			oldKeyfileLabel := status.keyfileLabel
+			oldComments := state.comments
+			oldParanoid := state.paranoid
+			oldReedsolo := state.reedSolomon
+			oldDeniability := state.deniability
+			oldSplit := state.split
+			oldSplitSize := state.splitSize
+			oldSplitSelected := state.splitSelected
+			oldDelete := state.delete
+			files := state.allFiles
 			go func() {
 				for _, file := range files {
 					// Simulate dropping the file
 					onDrop([]string{file})
 
 					// Restore variables and options
-					password = oldPassword
-					cpassword = oldPassword
-					keyfile = oldKeyfile
-					keyfiles = oldKeyfiles
-					keyfileOrdered = oldKeyfileOrdered
-					keyfileLabel = oldKeyfileLabel
-					comments = oldComments
-					paranoid = oldParanoid
-					reedsolo = oldReedsolo
-					if mode != "decrypt" {
-						deniability = oldDeniability
+					state.password = oldPassword
+					state.confirmPassword = oldPassword
+					state.keyfile = oldKeyfile
+					state.keyfiles = oldKeyfiles
+					state.keyfileOrdered = oldKeyfileOrdered
+					status.keyfileLabel = oldKeyfileLabel
+					state.comments = oldComments
+					state.paranoid = oldParanoid
+					state.reedSolomon = oldReedsolo
+					if state.mode != "decrypt" {
+						state.deniability = oldDeniability
 					}
-					split = oldSplit
-					splitSize = oldSplitSize
-					splitSelected = oldSplitSelected
-					delete = oldDelete
+					state.split = oldSplit
+					state.splitSize = oldSplitSize
+					state.splitSelected = oldSplitSelected
+					state.delete = oldDelete
 
 					work()
-					if !working {
+					if !status.working {
 						resetUI()
 						cancel(nil, nil)
-						showProgress = false
-						giu.Update()
+						status.showProgress = false
 						return
 					}
 				}
-				working = false
-				showProgress = false
-				giu.Update()
+				status.working = false
+				status.showProgress = false
 			}()
 		}
 	}
 }
 
-// The main user interface
-func draw() {
-	giu.SingleWindow().Flags(524351).Layout(
-		giu.Custom(func() {
-			if giu.IsKeyReleased(giu.KeyEnter) {
-				onClickStartButton()
-				return
-			}
-			if showPassgen {
-				giu.PopupModal("Generate password:##"+strconv.Itoa(modalId)).Flags(6).Layout(
-					giu.Row(
-						giu.Label("Length:"),
-						giu.SliderInt(&passgenLength, 12, 64).Size(giu.Auto),
-					),
-					giu.Checkbox("Uppercase", &passgenUpper),
-					giu.Checkbox("Lowercase", &passgenLower),
-					giu.Checkbox("Numbers", &passgenNums),
-					giu.Checkbox("Symbols", &passgenSymbols),
-					giu.Checkbox("Copy to clipboard", &passgenCopy),
-					giu.Row(
-						giu.Button("Cancel").Size(100, 0).OnClick(func() {
-							giu.CloseCurrentPopup()
-							showPassgen = false
-						}),
-						giu.Style().SetDisabled(!(passgenUpper || passgenLower || passgenNums || passgenSymbols)).To(
-							giu.Button("Generate").Size(100, 0).OnClick(func() {
-								password = genPassword()
-								cpassword = password
-								passwordStrength = zxcvbn.PasswordStrength(password, nil).Score
-
-								giu.CloseCurrentPopup()
-								showPassgen = false
-							}),
-						),
-					),
-				).Build()
-				giu.OpenPopup("Generate password:##" + strconv.Itoa(modalId))
-				giu.Update()
-			}
-
-			if showKeyfile {
-				giu.PopupModal("Manage keyfiles:##"+strconv.Itoa(modalId)).Flags(70).Layout(
-					giu.Label("Drag and drop your keyfiles here"),
-					giu.Custom(func() {
-						if mode != "decrypt" {
-							giu.Checkbox("Require correct order", &keyfileOrdered).Build()
-							giu.Tooltip("Ordering of keyfiles will matter").Build()
-						} else if keyfileOrdered {
-							giu.Label("Correct ordering is required").Build()
-						}
-					}),
-					giu.Custom(func() {
-						if len(keyfiles) > 0 {
-							giu.Separator().Build()
-						}
-						for _, i := range keyfiles {
-							giu.Label(filepath.Base(i)).Build()
-						}
-					}),
-					giu.Row(
-						giu.Button("Clear").Size(100, 0).OnClick(func() {
-							keyfiles = nil
-							if keyfile {
-								keyfileLabel = "Keyfiles required"
-							} else {
-								keyfileLabel = "None selected"
-							}
-							modalId++
-							giu.Update()
-						}),
-						giu.Tooltip("Remove all keyfiles"),
-
-						giu.Button("Done").Size(100, 0).OnClick(func() {
-							giu.CloseCurrentPopup()
-							showKeyfile = false
-						}),
-					),
-				).Build()
-				giu.OpenPopup("Manage keyfiles:##" + strconv.Itoa(modalId))
-				giu.Update()
-			}
-
-			if showOverwrite {
-				giu.PopupModal("Warning:##"+strconv.Itoa(modalId)).Flags(6).Layout(
-					giu.Label("Output already exists. Overwrite?"),
-					giu.Row(
-						giu.Button("No").Size(100, 0).OnClick(func() {
-							giu.CloseCurrentPopup()
-							showOverwrite = false
-						}),
-						giu.Button("Yes").Size(100, 0).OnClick(func() {
-							giu.CloseCurrentPopup()
-							showOverwrite = false
-
-							showProgress = true
-							fastDecode = true
-							canCancel = true
-							modalId++
-							giu.Update()
-							go func() {
-								work()
-								working = false
-								showProgress = false
-								giu.Update()
-							}()
-						}),
-					),
-				).Build()
-				giu.OpenPopup("Warning:##" + strconv.Itoa(modalId))
-				giu.Update()
-			}
-
-			if showProgress {
-				giu.PopupModal("Progress:##"+strconv.Itoa(modalId)).Flags(6|1<<0).Layout(
-					giu.Dummy(0, 0),
-					giu.Row(
-						giu.ProgressBar(progress).Size(210, 0).Overlay(progressInfo),
-						giu.Style().SetDisabled(!canCancel).To(
-							giu.Button(func() string {
-								if working {
-									return "Cancel"
-								}
-								return "..."
-							}()).Size(58, 0).OnClick(func() {
-								working = false
-								canCancel = false
-							}),
-						),
-					),
-					giu.Label(popupStatus),
-				).Build()
-				giu.OpenPopup("Progress:##" + strconv.Itoa(modalId))
-				giu.Update()
-			}
-		}),
-
-		giu.Row(
-			giu.Label(inputLabel),
-			giu.Custom(func() {
-				bw, _ := giu.CalcTextSize("Clear")
-				p, _ := giu.GetWindowPadding()
-				bw += p * 2
-				giu.Dummy((bw+p)/-dpi, 0).Build()
-				giu.SameLine()
-				giu.Style().SetDisabled((len(allFiles) == 0 && len(onlyFiles) == 0) || scanning).To(
-					giu.Button("Clear").Size(bw/dpi, 0).OnClick(resetUI),
-					giu.Tooltip("Clear all input files and reset UI state"),
-				).Build()
-			}),
-		),
-
-		giu.Separator(),
-		giu.Style().SetDisabled((len(allFiles) == 0 && len(onlyFiles) == 0) || scanning).To(
-			giu.Label("Password:"),
-			giu.Row(
-				giu.Button(passwordStateLabel).Size(54, 0).OnClick(func() {
-					if passwordState == giu.InputTextFlagsPassword {
-						passwordState = giu.InputTextFlagsNone
-						passwordStateLabel = "Hide"
-					} else {
-						passwordState = giu.InputTextFlagsPassword
-						passwordStateLabel = "Show"
-					}
-					giu.Update()
-				}),
-				giu.Tooltip("Toggle the visibility of password entries"),
-
-				giu.Button("Clear").Size(54, 0).OnClick(func() {
-					password = ""
-					cpassword = ""
-					giu.Update()
-				}),
-				giu.Tooltip("Clear the password entries"),
-
-				giu.Button("Copy").Size(54, 0).OnClick(func() {
-					giu.Context.GetPlatform().SetClipboard(password)
-					giu.Update()
-				}),
-				giu.Tooltip("Copy the password into your clipboard"),
-
-				giu.Button("Paste").Size(54, 0).OnClick(func() {
-					tmp := giu.Context.GetPlatform().GetClipboard()
-					password = tmp
-					if mode != "decrypt" {
-						cpassword = tmp
-					}
-					passwordStrength = zxcvbn.PasswordStrength(password, nil).Score
-					giu.Update()
-				}),
-				giu.Tooltip("Paste a password from your clipboard"),
-
-				giu.Style().SetDisabled(mode == "decrypt").To(
-					giu.Button("Create").Size(54, 0).OnClick(func() {
-						showPassgen = true
-						modalId++
-						giu.Update()
-					}),
-				),
-				giu.Tooltip("Generate a cryptographically secure password"),
-			),
-			giu.Row(
-				giu.InputText(&password).Flags(passwordState).Size(302/dpi).OnChange(func() {
-					passwordStrength = zxcvbn.PasswordStrength(password, nil).Score
-					giu.Update()
-				}),
-				giu.Custom(func() {
-					c := giu.GetCanvas()
-					p := giu.GetCursorScreenPos()
-					col := color.RGBA{
-						uint8(0xc8 - 31*passwordStrength),
-						uint8(0x4c + 31*passwordStrength), 0x4b, 0xff,
-					}
-					if password == "" || mode == "decrypt" {
-						col = TRANSPARENT
-					}
-					path := p.Add(image.Pt(
-						int(math.Round(-20*float64(dpi))),
-						int(math.Round(12*float64(dpi))),
-					))
-					c.PathArcTo(path, 6*dpi, -math.Pi/2, math.Pi*(.4*float32(passwordStrength)-.1), -1)
-					c.PathStroke(col, false, 2)
-				}),
-			),
-
-			giu.Dummy(0, 0),
-			giu.Style().SetDisabled(password == "" || mode == "decrypt").To(
-				giu.Label("Confirm password:"),
-				giu.Row(
-					giu.InputText(&cpassword).Flags(passwordState).Size(302/dpi),
-					giu.Custom(func() {
-						c := giu.GetCanvas()
-						p := giu.GetCursorScreenPos()
-						col := color.RGBA{0x4c, 0xc8, 0x4b, 0xff}
-						if cpassword != password {
-							col = color.RGBA{0xc8, 0x4c, 0x4b, 0xff}
-						}
-						if password == "" || cpassword == "" || mode == "decrypt" {
-							col = TRANSPARENT
-						}
-						path := p.Add(image.Pt(
-							int(math.Round(-20*float64(dpi))),
-							int(math.Round(12*float64(dpi))),
-						))
-						c.PathArcTo(path, 6*dpi, 0, 2*math.Pi, -1)
-						c.PathStroke(col, false, 2)
-					}),
-				),
-			),
-
-			giu.Dummy(0, 0),
-			giu.Style().SetDisabled(mode == "decrypt" && !keyfile && !deniability).To(
-				giu.Row(
-					giu.Label("Keyfiles:"),
-					giu.Button("Edit").Size(54, 0).OnClick(func() {
-						showKeyfile = true
-						modalId++
-						giu.Update()
-					}),
-					giu.Tooltip("Manage keyfiles to use for "+(func() string {
-						if mode != "decrypt" {
-							return "encryption"
-						}
-						return "decryption"
-					}())),
-
-					giu.Style().SetDisabled(mode == "decrypt").To(
-						giu.Button("Create").Size(54, 0).OnClick(func() {
-							f := dialog.File().Title("Choose where to save the keyfile")
-							f.SetStartDir(func() string {
-								if len(onlyFiles) > 0 {
-									return filepath.Dir(onlyFiles[0])
-								}
-								return filepath.Dir(onlyFolders[0])
-							}())
-							f.SetInitFilename("keyfile-" + strconv.Itoa(int(time.Now().Unix())) + ".bin")
-							file, err := f.Save()
-							if file == "" || err != nil {
-								return
-							}
-
-							fout, err := os.Create(file)
-							if err != nil {
-								mainStatus = "Failed to create keyfile"
-								mainStatusColor = RED
-								giu.Update()
-								return
-							}
-							data := make([]byte, 32)
-							if n, err := rand.Read(data); err != nil || n != 32 {
-								panic(errors.New("fatal crypto/rand error"))
-							}
-							n, err := fout.Write(data)
-							if err != nil || n != 32 {
-								fout.Close()
-								panic(errors.New("failed to write full keyfile"))
-							}
-							if err := fout.Close(); err != nil {
-								panic(err)
-							} else {
-								mainStatus = "Ready"
-								mainStatusColor = WHITE
-								giu.Update()
-								return
-							}
-						}),
-						giu.Tooltip("Generate a cryptographically secure keyfile"),
-					),
-					giu.Style().SetDisabled(true).To(
-						giu.InputText(&keyfileLabel).Size(giu.Auto),
-					),
-				),
-			),
-		),
-
-		giu.Separator(),
-		giu.Style().SetDisabled(mode != "decrypt" && ((len(keyfiles) == 0 && password == "") || (password != cpassword)) || deniability).To(
-			giu.Style().SetDisabled(mode == "decrypt" && (comments == "" || comments == "Comments are corrupted")).To(
-				giu.Label(commentsLabel),
-				giu.InputText(&comments).Size(giu.Auto).Flags(func() giu.InputTextFlags {
-					if commentsDisabled {
-						return giu.InputTextFlagsReadOnly
-					} else if deniability {
-						comments = ""
-					}
-					return giu.InputTextFlagsNone
-				}()),
-				giu.Custom(func() {
-					if !commentsDisabled {
-						giu.Tooltip("Note: comments are not encrypted!").Build()
-					}
-				}),
-			),
-		),
-		giu.Style().SetDisabled((len(keyfiles) == 0 && password == "") || (mode == "encrypt" && password != cpassword)).To(
-			giu.Label("Advanced:"),
-			giu.Custom(func() {
-				if mode != "decrypt" {
-					giu.Row(
-						giu.Checkbox("Paranoid mode", &paranoid),
-						giu.Tooltip("Provides the highest level of security attainable"),
-						giu.Dummy(-170, 0),
-						giu.Style().SetDisabled(recursively || !(len(allFiles) > 1 || len(onlyFolders) > 0)).To(
-							giu.Checkbox("Compress files", &compress),
-							giu.Tooltip("Compress files with Deflate before encrypting"),
-						),
-					).Build()
-
-					giu.Row(
-						giu.Checkbox("Reed-Solomon", &reedsolo),
-						giu.Tooltip("Prevent file corruption with erasure coding"),
-						giu.Dummy(-170, 0),
-						giu.Checkbox("Delete files", &delete),
-						giu.Tooltip("Delete the input files after encryption"),
-					).Build()
-
-					giu.Row(
-						giu.Checkbox("Deniability", &deniability),
-						giu.Tooltip("Warning: only use this if you know what it does!"),
-						giu.Dummy(-170, 0),
-						giu.Style().SetDisabled(!(len(allFiles) > 1 || len(onlyFolders) > 0)).To(
-							giu.Checkbox("Recursively", &recursively).OnChange(func() {
-								compress = false
-							}),
-							giu.Tooltip("Warning: only use this if you know what it does!"),
-						),
-					).Build()
-
-					giu.Row(
-						giu.Checkbox("Split into chunks:", &split),
-						giu.Tooltip("Split the output file into smaller chunks"),
-						giu.Dummy(-170, 0),
-						giu.InputText(&splitSize).Size(86/dpi).Flags(2).OnChange(func() {
-							split = splitSize != ""
-						}),
-						giu.Tooltip("Choose the chunk size"),
-						giu.Combo("##splitter", splitUnits[splitSelected], splitUnits, &splitSelected).Size(68),
-						giu.Tooltip("Choose the chunk units"),
-					).Build()
-				} else {
-					giu.Row(
-						giu.Style().SetDisabled(deniability).To(
-							giu.Checkbox("Force decrypt", &keep),
-							giu.Tooltip("Override security measures when decrypting"),
-						),
-						giu.Dummy(-170, 0),
-						giu.Checkbox("Delete volume", &delete),
-						giu.Tooltip("Delete the volume after a successful decryption"),
-					).Build()
-
-					giu.Row(
-						giu.Style().SetDisabled(!strings.HasSuffix(inputFile, ".zip.pcv")).To(
-							giu.Checkbox("Auto unzip", &autoUnzip).OnChange(func() {
-								if !autoUnzip {
-									sameLevel = false
-								}
-							}),
-							giu.Tooltip("Extract .zip upon decryption (may overwrite files)"),
-						),
-						giu.Dummy(-170, 0),
-						giu.Style().SetDisabled(!autoUnzip).To(
-							giu.Checkbox("Same level", &sameLevel),
-							giu.Tooltip("Extract .zip contents to same folder as volume"),
-						),
-					).Build()
-				}
-			}),
-
-			giu.Style().SetDisabled(recursively).To(
-				giu.Label("Save output as:"),
-				giu.Custom(func() {
-					w, _ := giu.GetAvailableRegion()
-					bw, _ := giu.CalcTextSize("Change")
-					p, _ := giu.GetWindowPadding()
-					bw += p * 2
-					dw := w - bw - p
-					giu.Style().SetDisabled(true).To(
-						giu.InputText(func() *string {
-							tmp := ""
-							if outputFile == "" {
-								return &tmp
-							}
-							tmp = filepath.Base(outputFile)
-							if split {
-								tmp += ".*"
-							}
-							if recursively {
-								tmp = "(multiple values)"
-							}
-							return &tmp
-						}()).Size(dw / dpi / dpi).Flags(16384),
-					).Build()
-
-					giu.SameLine()
-					giu.Button("Change").Size(bw/dpi, 0).OnClick(func() {
-						f := dialog.File().Title("Choose where to save the output. Don't include extensions")
-						f.SetStartDir(func() string {
-							if len(onlyFiles) > 0 {
-								return filepath.Dir(onlyFiles[0])
-							}
-							return filepath.Dir(onlyFolders[0])
-						}())
-
-						// Prefill the filename
-						tmp := strings.TrimSuffix(filepath.Base(outputFile), ".pcv")
-						f.SetInitFilename(strings.TrimSuffix(tmp, filepath.Ext(tmp)))
-						if mode == "encrypt" && (len(allFiles) > 1 || len(onlyFolders) > 0 || compress) {
-							f.SetInitFilename("encrypted-" + strconv.Itoa(int(time.Now().Unix())))
-						}
-
-						// Get the chosen file path
-						file, err := f.Save()
-						if file == "" || err != nil {
-							return
-						}
-						file = filepath.Join(filepath.Dir(file), strings.Split(filepath.Base(file), ".")[0])
-
-						// Add the correct extensions
-						if mode == "encrypt" {
-							if len(allFiles) > 1 || len(onlyFolders) > 0 || compress {
-								file += ".zip.pcv"
-							} else {
-								file += filepath.Ext(inputFile) + ".pcv"
-							}
-						} else {
-							if strings.HasSuffix(inputFile, ".zip.pcv") {
-								file += ".zip"
-							} else {
-								tmp := strings.TrimSuffix(filepath.Base(inputFile), ".pcv")
-								file += filepath.Ext(tmp)
-							}
-						}
-						outputFile = file
-						mainStatus = "Ready"
-						mainStatusColor = WHITE
-						giu.Update()
-					}).Build()
-					giu.Tooltip("Save the output with a custom name and path").Build()
-				}),
-			),
-
-			giu.Dummy(0, 0),
-			giu.Separator(),
-			giu.Dummy(0, 0),
-			giu.Button(func() string {
-				if !recursively {
-					return startLabel
-				}
-				return "Process"
-			}()).Size(giu.Auto, 34).OnClick(onClickStartButton),
-			giu.Custom(func() {
-				if mainStatus != "Ready" {
-					giu.Style().SetColor(giu.StyleColorText, mainStatusColor).To(
-						giu.Label(mainStatus),
-					).Build()
-					return
-				}
-				if requiredFreeSpace > 0 {
-					multiplier := 1
-					if len(allFiles) > 1 || len(onlyFolders) > 0 { // need a temporary zip file
-						multiplier++
-					}
-					if deniability {
-						multiplier++
-					}
-					if split {
-						multiplier++
-					}
-					if recombine {
-						multiplier++
-					}
-					if autoUnzip {
-						multiplier++
-					}
-					giu.Style().SetColor(giu.StyleColorText, WHITE).To(
-						giu.Label("Ready (ensure >" + sizeify(requiredFreeSpace*int64(multiplier)) + " of disk space is free)"),
-					).Build()
-				} else {
-					giu.Style().SetColor(giu.StyleColorText, WHITE).To(
-						giu.Label("Ready"),
-					).Build()
-				}
-			}),
-		),
-
-		giu.Custom(func() {
-			window.SetSize(int(318*dpi), giu.GetCursorPos().Y+1)
-		}),
-	)
-}
-
 func onDrop(names []string) {
-	if showKeyfile {
-		keyfiles = append(keyfiles, names...)
+	if status.showKeyfile {
+		state.keyfiles = append(state.keyfiles, names...)
 
 		// Make sure keyfiles are accessible, remove duplicates
 		var tmp []string
-		for _, i := range keyfiles {
+		for _, i := range state.keyfiles {
 			duplicate := false
 			for _, j := range tmp {
 				if i == j {
@@ -862,33 +303,29 @@ func onDrop(names []string) {
 			if err == nil {
 				fin.Close()
 			} else {
-				showKeyfile = false
+				status.showKeyfile = false
 				resetUI()
 				accessDenied("Keyfile read")
-				giu.Update()
 				return
 			}
 			if !duplicate && statErr == nil && !stat.IsDir() {
 				tmp = append(tmp, i)
 			}
 		}
-		keyfiles = tmp
+		state.keyfiles = tmp
 
 		// Update the keyfile status
-		if len(keyfiles) == 0 {
-			keyfileLabel = "None selected"
-		} else if len(keyfiles) == 1 {
-			keyfileLabel = "Using 1 keyfile"
+		if len(state.keyfiles) == 0 {
+			status.keyfileLabel = "None selected"
+		} else if len(state.keyfiles) == 1 {
+			status.keyfileLabel = "Using 1 keyfile"
 		} else {
-			keyfileLabel = fmt.Sprintf("Using %d keyfiles", len(keyfiles))
+			status.keyfileLabel = fmt.Sprintf("Using %d keyfiles", len(state.keyfiles))
 		}
-
-		modalId++
-		giu.Update()
 		return
 	}
 
-	scanning = true
+	status.scanning = true
 	files, folders := 0, 0
 	compressDone, compressTotal = 0, 0
 	resetUI()
@@ -897,24 +334,23 @@ func onDrop(names []string) {
 	if len(names) == 1 {
 		stat, err := os.Stat(names[0])
 		if err != nil {
-			mainStatus = "Failed to stat dropped item"
-			mainStatusColor = RED
-			giu.Update()
+			status.main = "Failed to stat dropped item"
+			status.mainColor = RED
 			return
 		}
 
 		// A folder was dropped
 		if stat.IsDir() {
 			folders++
-			mode = "encrypt"
-			inputLabel = "1 folder"
-			startLabel = "Zip and Encrypt"
-			onlyFolders = append(onlyFolders, names[0])
-			inputFile = filepath.Join(filepath.Dir(names[0]), "encrypted-"+strconv.Itoa(int(time.Now().Unix()))) + ".zip"
-			outputFile = inputFile + ".pcv"
+			state.mode = "encrypt"
+			status.inputLabel = "1 folder"
+			status.startLabel = "Zip and Encrypt"
+			state.onlyFolders = append(state.onlyFolders, names[0])
+			state.inputFile = filepath.Join(filepath.Dir(names[0]), "encrypted-"+strconv.Itoa(int(time.Now().Unix()))) + ".zip"
+			state.outputFile = state.inputFile + ".pcv"
 		} else { // A file was dropped
 			files++
-			requiredFreeSpace = stat.Size()
+			status.requiredFreeSpace = stat.Size()
 
 			// Is the file a part of a split volume?
 			nums := []string{"0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
@@ -928,33 +364,33 @@ func onDrop(names []string) {
 
 			// Decide if encrypting or decrypting
 			if strings.HasSuffix(names[0], ".pcv") || isSplit {
-				mode = "decrypt"
-				inputLabel = "Volume for decryption"
-				startLabel = "Decrypt"
-				commentsLabel = "Comments (read-only):"
-				commentsDisabled = true
+				state.mode = "decrypt"
+				status.inputLabel = "Volume for decryption"
+				status.startLabel = "Decrypt"
+				status.commentsLabel = "Comments (read-only):"
+				status.commentsDisabled = true
 
 				// Get the correct input and output filenames
 				if isSplit {
 					ind := strings.Index(names[0], ".pcv")
 					names[0] = names[0][:ind+4]
-					inputFile = names[0]
-					outputFile = names[0][:ind]
-					recombine = true
+					state.inputFile = names[0]
+					state.outputFile = names[0][:ind]
+					state.recombine = true
 
 					// Find out the number of splitted chunks
 					totalFiles := 0
 					for {
-						stat, err := os.Stat(fmt.Sprintf("%s.%d", inputFile, totalFiles))
+						stat, err := os.Stat(fmt.Sprintf("%s.%d", state.inputFile, totalFiles))
 						if err != nil {
 							break
 						}
 						totalFiles++
 						compressTotal += stat.Size()
 					}
-					requiredFreeSpace = compressTotal
+					status.requiredFreeSpace = compressTotal
 				} else {
-					outputFile = names[0][:len(names[0])-4]
+					state.outputFile = names[0][:len(names[0])-4]
 				}
 
 				// Open the input file in read-only mode
@@ -968,7 +404,6 @@ func onDrop(names []string) {
 				if err != nil {
 					resetUI()
 					accessDenied("Read")
-					giu.Update()
 					return
 				}
 
@@ -976,66 +411,59 @@ func onDrop(names []string) {
 				tmp := make([]byte, 15)
 				if n, err := fin.Read(tmp); err != nil || n != 15 {
 					fin.Close()
-					mainStatus = "Failed to read 15 bytes from file"
-					mainStatusColor = RED
-					giu.Update()
+					status.main = "Failed to read 15 bytes from file"
+					status.mainColor = RED
 					return
 				}
 				tmp, err = rsDecode(rs5, tmp)
 				if valid, _ := regexp.Match(`^v\d\.\d{2}`, tmp); err != nil || !valid {
 					// Volume has plausible deniability
-					deniability = true
-					mainStatus = "Can't read header, assuming volume is deniable"
+					state.deniability = true
+					status.main = "Can't read header, assuming volume is deniable"
 					fin.Close()
-					giu.Update()
 				} else {
 					// Read comments from file and check for corruption
 					tmp = make([]byte, 15)
 					if n, err := fin.Read(tmp); err != nil || n != 15 {
 						fin.Close()
-						mainStatus = "Failed to read 15 bytes from file"
-						mainStatusColor = RED
-						giu.Update()
+						status.main = "Failed to read 15 bytes from file"
+						status.mainColor = RED
 						return
 					}
 					tmp, err = rsDecode(rs5, tmp)
 					if err == nil {
 						commentsLength, err := strconv.Atoi(string(tmp))
 						if err != nil {
-							comments = "Comment length is corrupted"
-							giu.Update()
+							state.comments = "Comment length is corrupted"
 						} else {
 							tmp = make([]byte, commentsLength*3)
 							if n, err := fin.Read(tmp); err != nil || n != commentsLength*3 {
 								fin.Close()
-								mainStatus = "Failed to read comments from file"
-								mainStatusColor = RED
-								giu.Update()
+								status.main = "Failed to read comments from file"
+								status.mainColor = RED
 								return
 							}
-							comments = ""
+							state.comments = ""
 							for i := 0; i < commentsLength*3; i += 3 {
 								t, err := rsDecode(rs1, tmp[i:i+3])
 								if err != nil {
-									comments = "Comments are corrupted"
+									state.comments = "Comments are corrupted"
 									break
 								}
-								comments += string(t)
+								state.comments += string(t)
 							}
-							giu.Update()
 						}
 					} else {
-						comments = "Comments are corrupted"
-						giu.Update()
+						state.comments = "Comments are corrupted"
+
 					}
 
 					// Read flags from file and check for corruption
 					flags := make([]byte, 15)
 					if n, err := fin.Read(flags); err != nil || n != 15 {
 						fin.Close()
-						mainStatus = "Failed to read 15 bytes from file"
-						mainStatusColor = RED
-						giu.Update()
+						status.main = "Failed to read 15 bytes from file"
+						status.mainColor = RED
 						return
 					}
 					if err := fin.Close(); err != nil {
@@ -1043,143 +471,130 @@ func onDrop(names []string) {
 					}
 					flags, err = rsDecode(rs5, flags)
 					if err != nil {
-						mainStatus = "The volume header is damaged"
-						mainStatusColor = RED
-						giu.Update()
+						status.main = "The volume header is damaged"
+						status.mainColor = RED
 						return
 					}
 
 					// Update UI and variables according to flags
 					if flags[1] == 1 {
-						keyfile = true
-						keyfileLabel = "Keyfiles required"
+						state.keyfile = true
+						status.keyfileLabel = "Keyfiles required"
 					} else {
-						keyfileLabel = "Not applicable"
+						status.keyfileLabel = "Not applicable"
 					}
 					if flags[2] == 1 {
-						keyfileOrdered = true
+						state.keyfileOrdered = true
 					}
-					giu.Update()
 				}
 			} else { // One file was dropped for encryption
-				mode = "encrypt"
-				inputLabel = "1 file"
-				startLabel = "Encrypt"
-				inputFile = names[0]
-				outputFile = names[0] + ".pcv"
-				giu.Update()
+				state.mode = "encrypt"
+				status.inputLabel = "1 file"
+				status.startLabel = "Encrypt"
+				state.inputFile = names[0]
+				state.outputFile = names[0] + ".pcv"
 			}
 
 			// Add the file
-			onlyFiles = append(onlyFiles, names[0])
-			inputFile = names[0]
+			state.onlyFiles = append(state.onlyFiles, names[0])
+			state.inputFile = names[0]
 			if !isSplit {
 				compressTotal += stat.Size()
 			}
-			giu.Update()
 		}
 	} else { // There are multiple dropped items
-		mode = "encrypt"
-		startLabel = "Zip and Encrypt"
+		state.mode = "encrypt"
+		status.startLabel = "Zip and Encrypt"
 
 		// Go through each dropped item and add to corresponding slices
 		for _, name := range names {
 			stat, err := os.Stat(name)
 			if err != nil {
 				resetUI()
-				mainStatus = "Failed to stat dropped items"
-				mainStatusColor = RED
-				giu.Update()
+				status.main = "Failed to stat dropped items"
+				status.mainColor = RED
 				return
 			}
 			if stat.IsDir() {
 				folders++
-				onlyFolders = append(onlyFolders, name)
+				state.onlyFolders = append(state.onlyFolders, name)
 			} else {
 				files++
-				onlyFiles = append(onlyFiles, name)
-				allFiles = append(allFiles, name)
+				state.onlyFiles = append(state.onlyFiles, name)
+				state.allFiles = append(state.allFiles, name)
 
 				compressTotal += stat.Size()
-				requiredFreeSpace += stat.Size()
-				inputLabel = fmt.Sprintf("Scanning files... (%s)", sizeify(compressTotal))
-				giu.Update()
+				status.requiredFreeSpace += stat.Size()
+				status.inputLabel = fmt.Sprintf("scanning files... (%s)", sizeify(compressTotal))
 			}
 		}
 
 		// Update UI with the number of files and folders selected
 		if folders == 0 {
-			inputLabel = fmt.Sprintf("%d files", files)
+			status.inputLabel = fmt.Sprintf("%d files", files)
 		} else if files == 0 {
-			inputLabel = fmt.Sprintf("%d folders", folders)
+			status.inputLabel = fmt.Sprintf("%d folders", folders)
 		} else {
 			if files == 1 && folders > 1 {
-				inputLabel = fmt.Sprintf("1 file and %d folders", folders)
+				status.inputLabel = fmt.Sprintf("1 file and %d folders", folders)
 			} else if folders == 1 && files > 1 {
-				inputLabel = fmt.Sprintf("%d files and 1 folder", files)
+				status.inputLabel = fmt.Sprintf("%d files and 1 folder", files)
 			} else if folders == 1 && files == 1 {
-				inputLabel = "1 file and 1 folder"
+				status.inputLabel = "1 file and 1 folder"
 			} else {
-				inputLabel = fmt.Sprintf("%d files and %d folders", files, folders)
+				status.inputLabel = fmt.Sprintf("%d files and %d folders", files, folders)
 			}
 		}
-
 		// Set the input and output paths
-		inputFile = filepath.Join(filepath.Dir(names[0]), "encrypted-"+strconv.Itoa(int(time.Now().Unix()))) + ".zip"
-		outputFile = inputFile + ".pcv"
-		giu.Update()
+		state.inputFile = filepath.Join(filepath.Dir(names[0]), "encrypted-"+strconv.Itoa(int(time.Now().Unix()))) + ".zip"
+		state.outputFile = state.inputFile + ".pcv"
 	}
 
 	// Recursively add all files in 'onlyFolders' to 'allFiles'
 	go func() {
-		oldInputLabel := inputLabel
-		for _, name := range onlyFolders {
+		oldInputLabel := status.inputLabel
+		for _, name := range state.onlyFolders {
 			if filepath.Walk(name, func(path string, _ os.FileInfo, err error) error {
 				if err != nil {
 					resetUI()
-					mainStatus = "Failed to walk through dropped items"
-					mainStatusColor = RED
-					giu.Update()
+					status.main = "Failed to walk through dropped items"
+					status.mainColor = RED
 					return err
 				}
 				stat, err := os.Stat(path)
 				if err != nil {
 					resetUI()
-					mainStatus = "Failed to walk through dropped items"
-					mainStatusColor = RED
-					giu.Update()
+					status.main = "Failed to walk through dropped items"
+					status.mainColor = RED
 					return err
 				}
 				// If 'path' is a valid file path, add to 'allFiles'
 				if !stat.IsDir() {
-					allFiles = append(allFiles, path)
+					state.allFiles = append(state.allFiles, path)
 					compressTotal += stat.Size()
-					requiredFreeSpace += stat.Size()
-					inputLabel = fmt.Sprintf("Scanning files... (%s)", sizeify(compressTotal))
-					giu.Update()
+					status.requiredFreeSpace += stat.Size()
+					status.inputLabel = fmt.Sprintf("scanning files... (%s)", sizeify(compressTotal))
 				}
 				return nil
 			}) != nil {
 				resetUI()
-				mainStatus = "Failed to walk through dropped items"
-				mainStatusColor = RED
-				giu.Update()
+				status.main = "Failed to walk through dropped items"
+				status.mainColor = RED
 				return
 			}
 		}
-		inputLabel = fmt.Sprintf("%s (%s)", oldInputLabel, sizeify(compressTotal))
-		scanning = false
-		giu.Update()
+		status.inputLabel = fmt.Sprintf("%s (%s)", oldInputLabel, sizeify(compressTotal))
+		status.scanning = false
 	}()
 }
 
 func work() {
-	popupStatus = "Starting..."
-	mainStatus = "Working..."
-	mainStatusColor = WHITE
-	working = true
+	status.popup = "Starting..."
+	status.main = "working..."
+	status.mainColor = WHITE
+	status.working = true
+
 	padded := false
-	giu.Update()
 
 	// Cryptography values
 	var salt []byte                    // Argon2 salt, 16 bytes
@@ -1225,24 +640,24 @@ func work() {
 	}()
 
 	// Combine/compress all files into a .zip file if needed
-	if len(allFiles) > 1 || len(onlyFolders) > 0 {
+	if len(state.allFiles) > 1 || len(state.onlyFolders) > 0 {
 		// Consider case where compressing only one file
-		files := allFiles
-		if len(allFiles) == 0 {
-			files = onlyFiles
+		files := state.allFiles
+		if len(state.allFiles) == 0 {
+			files = state.onlyFiles
 		}
 
 		// Get the root directory of the selected files
 		var rootDir string
-		if len(onlyFolders) > 0 {
-			rootDir = filepath.Dir(onlyFolders[0])
+		if len(state.onlyFolders) > 0 {
+			rootDir = filepath.Dir(state.onlyFolders[0])
 		} else {
-			rootDir = filepath.Dir(onlyFiles[0])
+			rootDir = filepath.Dir(state.onlyFiles[0])
 		}
 
 		// Open a temporary .zip for writing
-		inputFile = strings.TrimSuffix(outputFile, ".pcv") + ".tmp"
-		file, err := os.Create(inputFile)
+		state.inputFile = strings.TrimSuffix(state.outputFile, ".pcv") + ".tmp"
+		file, err := os.Create(state.inputFile)
 		if err != nil { // Make sure file is writable
 			accessDenied("Write")
 			return
@@ -1257,35 +672,34 @@ func work() {
 		writer := zip.NewWriter(&tempZip)
 		compressStart = time.Now()
 		for i, path := range files {
-			progressInfo = fmt.Sprintf("%d/%d", i+1, len(files))
-			giu.Update()
+			status.progressInfo = fmt.Sprintf("%d/%d", i+1, len(files))
 
 			// Create file info header (size, last modified, etc.)
 			stat, err := os.Stat(path)
 			if err != nil {
 				writer.Close()
 				file.Close()
-				os.Remove(inputFile)
+				os.Remove(state.inputFile)
 				resetUI()
-				mainStatus = "Failed to stat input files"
-				mainStatusColor = RED
+				status.main = "Failed to stat input files"
+				status.mainColor = RED
 				return
 			}
 			header, err := zip.FileInfoHeader(stat)
 			if err != nil {
 				writer.Close()
 				file.Close()
-				os.Remove(inputFile)
+				os.Remove(state.inputFile)
 				resetUI()
-				mainStatus = "Failed to create zip.FileInfoHeader"
-				mainStatusColor = RED
+				status.main = "Failed to create zip.FileInfoHeader"
+				status.mainColor = RED
 				return
 			}
 			header.Name = strings.TrimPrefix(path, rootDir)
 			header.Name = filepath.ToSlash(header.Name)
 			header.Name = strings.TrimPrefix(header.Name, "/")
 
-			if compress {
+			if state.compress {
 				header.Method = zip.Deflate
 			} else {
 				header.Method = zip.Store
@@ -1296,17 +710,17 @@ func work() {
 			if err != nil {
 				writer.Close()
 				file.Close()
-				os.Remove(inputFile)
+				os.Remove(state.inputFile)
 				resetUI()
-				mainStatus = "Failed to writer.CreateHeader"
-				mainStatusColor = RED
+				status.main = "Failed to writer.CreateHeader"
+				status.mainColor = RED
 				return
 			}
 			fin, err := os.Open(path)
 			if err != nil {
 				writer.Close()
 				file.Close()
-				os.Remove(inputFile)
+				os.Remove(state.inputFile)
 				resetUI()
 				accessDenied("Read")
 				return
@@ -1321,14 +735,14 @@ func work() {
 			if err != nil {
 				writer.Close()
 				insufficientSpace(nil, file)
-				os.Remove(inputFile)
+				os.Remove(state.inputFile)
 				return
 			}
 
-			if !working {
+			if !status.working {
 				writer.Close()
 				cancel(nil, file)
-				os.Remove(inputFile)
+				os.Remove(state.inputFile)
 				return
 			}
 		}
@@ -1341,14 +755,14 @@ func work() {
 	}
 
 	// Recombine a split file if necessary
-	if recombine {
+	if state.recombine {
 		totalFiles := 0
 		totalBytes := int64(0)
 		done := 0
 
 		// Find out the number of splitted chunks
 		for {
-			stat, err := os.Stat(fmt.Sprintf("%s.%d", inputFile, totalFiles))
+			stat, err := os.Stat(fmt.Sprintf("%s.%d", state.inputFile, totalFiles))
 			if err != nil {
 				break
 			}
@@ -1357,15 +771,15 @@ func work() {
 		}
 
 		// Make sure not to overwrite anything
-		_, err := os.Stat(outputFile + ".pcv")
+		_, err := os.Stat(state.outputFile + ".pcv")
 		if err == nil { // File already exists
-			mainStatus = "Please remove " + filepath.Base(outputFile+".pcv")
-			mainStatusColor = RED
+			status.main = "Please remove " + filepath.Base(state.outputFile+".pcv")
+			status.mainColor = RED
 			return
 		}
 
 		// Create a .pcv to combine chunks into
-		fout, err := os.Create(outputFile + ".pcv")
+		fout, err := os.Create(state.outputFile + ".pcv")
 		if err != nil { // Make sure file is writable
 			accessDenied("Write")
 			return
@@ -1374,19 +788,19 @@ func work() {
 		// Merge all chunks into one file
 		startTime := time.Now()
 		for i := range totalFiles {
-			fin, err := os.Open(fmt.Sprintf("%s.%d", inputFile, i))
+			fin, err := os.Open(fmt.Sprintf("%s.%d", state.inputFile, i))
 			if err != nil {
 				fout.Close()
-				os.Remove(outputFile + ".pcv")
+				os.Remove(state.outputFile + ".pcv")
 				resetUI()
 				accessDenied("Read")
 				return
 			}
 
 			for {
-				if !working {
+				if !status.working {
 					cancel(fin, fout)
-					os.Remove(outputFile + ".pcv")
+					os.Remove(state.outputFile + ".pcv")
 					return
 				}
 
@@ -1403,15 +817,14 @@ func work() {
 
 				if err != nil || n != len(data) {
 					insufficientSpace(fin, fout)
-					os.Remove(outputFile + ".pcv")
+					os.Remove(state.outputFile + ".pcv")
 					return
 				}
 
 				// Update the stats
-				progress, speed, eta = statify(int64(done), totalBytes, startTime)
-				progressInfo = fmt.Sprintf("%d/%d", i+1, totalFiles)
-				popupStatus = fmt.Sprintf("Recombining at %.2f MiB/s (ETA: %s)", speed, eta)
-				giu.Update()
+				status.progress, status.speed, status.eta = statify(int64(done), totalBytes, startTime)
+				status.progressInfo = fmt.Sprintf("%d/%d", i+1, totalFiles)
+				status.popup = fmt.Sprintf("Recombining at %.2f MiB/s (ETA: %s)", status.speed, status.eta)
 			}
 			if err := fin.Close(); err != nil {
 				panic(err)
@@ -1420,20 +833,19 @@ func work() {
 		if err := fout.Close(); err != nil {
 			panic(err)
 		}
-		inputFileOld = inputFile
-		inputFile = outputFile + ".pcv"
+		state.inputFileOld = state.inputFile
+		state.inputFile = state.outputFile + ".pcv"
 	}
 
 	// Input volume has plausible deniability
-	if mode == "decrypt" && deniability {
-		popupStatus = "Removing deniability protection..."
-		progressInfo = ""
-		progress = 0
-		canCancel = false
-		giu.Update()
+	if state.mode == "decrypt" && state.deniability {
+		status.popup = "Removing deniability protection..."
+		status.progressInfo = ""
+		status.progress = 0
+		status.canCancel = false
 
 		// Get size of volume for showing progress
-		stat, err := os.Stat(inputFile)
+		stat, err := os.Stat(state.inputFile)
 		if err != nil {
 			// we already read from inputFile successfully in onDrop
 			// so it is very unlikely this err != nil, we can just panic
@@ -1442,15 +854,15 @@ func work() {
 		total := stat.Size()
 
 		// Rename input volume to free up the filename
-		fin, err := os.Open(inputFile)
+		fin, err := os.Open(state.inputFile)
 		if err != nil {
 			panic(err)
 		}
-		for strings.HasSuffix(inputFile, ".tmp") {
-			inputFile = strings.TrimSuffix(inputFile, ".tmp")
+		for strings.HasSuffix(state.inputFile, ".tmp") {
+			state.inputFile = strings.TrimSuffix(state.inputFile, ".tmp")
 		}
-		inputFile += ".tmp"
-		fout, err := os.Create(inputFile)
+		state.inputFile += ".tmp"
+		fout, err := os.Create(state.inputFile)
 		if err != nil {
 			panic(err)
 		}
@@ -1466,7 +878,7 @@ func work() {
 		}
 
 		// Generate key and XChaCha20
-		key := argon2.IDKey([]byte(password), salt, 4, 1<<20, 4, 32)
+		key := argon2.IDKey([]byte(state.password), salt, 4, 1<<20, 4, 32)
 		chacha, err := chacha20.NewUnauthenticatedCipher(key, nonce)
 		if err != nil {
 			panic(err)
@@ -1492,8 +904,7 @@ func work() {
 			// Update stats
 			done += size
 			counter += MiB
-			progress = float32(float64(done) / float64(total))
-			giu.Update()
+			status.progress = float32(float64(done) / float64(total))
 
 			// Change nonce after 60 GiB to prevent overflow
 			if counter >= 60*GiB {
@@ -1518,7 +929,7 @@ func work() {
 		}
 
 		// Check if the version can be read from the volume
-		fin, err = os.Open(inputFile)
+		fin, err = os.Open(state.inputFile)
 		if err != nil {
 			panic(err)
 		}
@@ -1531,35 +942,34 @@ func work() {
 		}
 		tmp, err = rsDecode(rs5, tmp)
 		if valid, _ := regexp.Match(`^v\d\.\d{2}`, tmp); err != nil || !valid {
-			os.Remove(inputFile)
-			inputFile = strings.TrimSuffix(inputFile, ".tmp")
+			os.Remove(state.inputFile)
+			state.inputFile = strings.TrimSuffix(state.inputFile, ".tmp")
 			broken(nil, nil, "Password is incorrect or the file is not a volume", true)
-			if recombine {
-				inputFile = inputFileOld
+			if state.recombine {
+				state.inputFile = state.inputFileOld
 			}
 			return
 		}
 	}
 
-	canCancel = false
-	progress = 0
-	progressInfo = ""
-	giu.Update()
+	status.canCancel = false
+	status.progress = 0
+	status.progressInfo = ""
 
 	// Subtract the header size from the total size if decrypting
-	stat, err := os.Stat(inputFile)
+	stat, err := os.Stat(state.inputFile)
 	if err != nil {
 		resetUI()
 		accessDenied("Read")
 		return
 	}
 	total := stat.Size()
-	if mode == "decrypt" {
+	if state.mode == "decrypt" {
 		total -= 789
 	}
 
 	// Open input file in read-only mode
-	fin, err := os.Open(inputFile)
+	fin, err := os.Open(state.inputFile)
 	if err != nil {
 		resetUI()
 		accessDenied("Read")
@@ -1570,31 +980,30 @@ func work() {
 	var fout *os.File
 
 	// If encrypting, generate values and write to file
-	if mode == "encrypt" {
-		popupStatus = "Generating values..."
-		giu.Update()
+	if state.mode == "encrypt" {
+		status.popup = "Generating values..."
 
 		// Stores any errors when writing to file
 		errs := make([]error, 11)
 
 		// Make sure not to overwrite anything
-		_, err = os.Stat(outputFile)
-		if split && err == nil { // File already exists
+		_, err = os.Stat(state.outputFile)
+		if state.split && err == nil { // File already exists
 			fin.Close()
-			if len(allFiles) > 1 || len(onlyFolders) > 0 || compress {
-				os.Remove(inputFile)
+			if len(state.allFiles) > 1 || len(state.onlyFolders) > 0 || state.compress {
+				os.Remove(state.inputFile)
 			}
-			mainStatus = "Please remove " + filepath.Base(outputFile)
-			mainStatusColor = RED
+			status.main = "Please remove " + filepath.Base(state.outputFile)
+			status.mainColor = RED
 			return
 		}
 
 		// Create the output file
-		fout, err = os.Create(outputFile + ".incomplete")
+		fout, err = os.Create(state.outputFile + ".incomplete")
 		if err != nil {
 			fin.Close()
-			if len(allFiles) > 1 || len(onlyFolders) > 0 || compress {
-				os.Remove(inputFile)
+			if len(state.allFiles) > 1 || len(state.onlyFolders) > 0 || state.compress {
+				os.Remove(state.inputFile)
 			}
 			accessDenied("Write")
 			return
@@ -1609,16 +1018,16 @@ func work() {
 		// Write the program version to file
 		_, errs[0] = fout.Write(rsEncode(rs5, []byte(version)))
 
-		if len(comments) > 99999 {
+		if len(state.comments) > 99999 {
 			panic(errors.New("comments exceed maximum length"))
 		}
 
 		// Encode and write the comment length to file
-		commentsLength := []byte(fmt.Sprintf("%05d", len(comments)))
+		commentsLength := []byte(fmt.Sprintf("%05d", len(state.comments)))
 		_, errs[1] = fout.Write(rsEncode(rs5, commentsLength))
 
 		// Encode the comment and write to file
-		for _, i := range []byte(comments) {
+		for _, i := range []byte(state.comments) {
 			_, err := fout.Write(rsEncode(rs1, []byte{i}))
 			if err != nil {
 				errs[2] = err
@@ -1627,16 +1036,16 @@ func work() {
 
 		// Configure flags and write to file
 		flags := make([]byte, 5)
-		if paranoid { // Paranoid mode selected
+		if state.paranoid { // Paranoid mode selected
 			flags[0] = 1
 		}
-		if len(keyfiles) > 0 { // Keyfiles are being used
+		if len(state.keyfiles) > 0 { // Keyfiles are being used
 			flags[1] = 1
 		}
-		if keyfileOrdered { // Order of keyfiles matter
+		if state.keyfileOrdered { // Order of keyfiles matter
 			flags[2] = 1
 		}
-		if reedsolo { // Full Reed-Solomon encoding is selected
+		if state.reedSolomon { // Full Reed-Solomon encoding is selected
 			flags[3] = 1
 		}
 		if total%int64(MiB) >= int64(MiB)-128 { // Reed-Solomon internals
@@ -1684,16 +1093,15 @@ func work() {
 		for _, err := range errs {
 			if err != nil {
 				insufficientSpace(fin, fout)
-				if len(allFiles) > 1 || len(onlyFolders) > 0 || compress {
-					os.Remove(inputFile)
+				if len(state.allFiles) > 1 || len(state.onlyFolders) > 0 || state.compress {
+					os.Remove(state.inputFile)
 				}
 				os.Remove(fout.Name())
 				return
 			}
 		}
 	} else { // Decrypting, read values from file and decode
-		popupStatus = "Reading values..."
-		giu.Update()
+		status.popup = "Reading values..."
 
 		// Stores any Reed-Solomon decoding errors
 		errs := make([]error, 10)
@@ -1729,12 +1137,12 @@ func work() {
 		fin.Read(flags)
 		flags, errs[2] = rsDecode(rs5, flags)
 		headerFlags = flags
-		paranoid = flags[0] == 1
-		reedsolo = flags[3] == 1
+		state.paranoid = flags[0] == 1
+		state.reedSolomon = flags[3] == 1
 		padded = flags[4] == 1
-		if deniability {
-			keyfile = flags[1] == 1
-			keyfileOrdered = flags[2] == 1
+		if state.deniability {
+			state.keyfile = flags[1] == 1
+			state.keyfileOrdered = flags[2] == 1
 		}
 		// For decryption, only consider keyfiles if header requires them
 		useKeyfiles = len(headerFlags) > 1 && headerFlags[1] == 1
@@ -1770,8 +1178,8 @@ func work() {
 		// If there was an issue during decoding, the header is corrupted
 		for _, err := range errs {
 			if err != nil {
-				if keep { // If the user chooses to force decrypt
-					kept = true
+				if state.keep { // If the user chooses to force decrypt
+					state.kept = true
 				} else {
 					broken(fin, nil, "The volume header is damaged", true)
 					return
@@ -1780,14 +1188,13 @@ func work() {
 		}
 	}
 
-	popupStatus = "Deriving key..."
-	giu.Update()
+	status.popup = "Deriving key..."
 
 	// Derive encryption keys and subkeys
 	var key []byte
-	if paranoid {
+	if state.paranoid {
 		key = argon2.IDKey(
-			[]byte(password),
+			[]byte(state.password),
 			salt,
 			8,     // 8 passes
 			1<<20, // 1 GiB memory
@@ -1796,7 +1203,7 @@ func work() {
 		)
 	} else {
 		key = argon2.IDKey(
-			[]byte(password),
+			[]byte(state.password),
 			salt,
 			4,
 			1<<20,
@@ -1809,16 +1216,15 @@ func work() {
 	}
 
 	// If keyfiles are being used. Decide whether to use keyfiles during this operation
-	if mode == "encrypt" {
-		useKeyfiles = len(keyfiles) > 0
+	if state.mode == "encrypt" {
+		useKeyfiles = len(state.keyfiles) > 0
 	}
 
 	if useKeyfiles {
-		popupStatus = "Reading keyfiles..."
-		giu.Update()
+		status.popup = "Reading keyfiles..."
 
 		var keyfileTotal int64
-		for _, path := range keyfiles {
+		for _, path := range state.keyfiles {
 			stat, err := os.Stat(path)
 			if err != nil {
 				panic(err) // we already checked os.Stat in onDrop
@@ -1826,12 +1232,12 @@ func work() {
 			keyfileTotal += stat.Size()
 		}
 
-		if keyfileOrdered { // If order matters, hash progressively
+		if state.keyfileOrdered { // If order matters, hash progressively
 			var tmp = sha3.New256()
 			var keyfileDone int
 
 			// For each keyfile...
-			for _, path := range keyfiles {
+			for _, path := range state.keyfiles {
 				fin, err := os.Open(path)
 				if err != nil {
 					panic(err)
@@ -1849,8 +1255,7 @@ func work() {
 
 					// Update progress
 					keyfileDone += size
-					progress = float32(keyfileDone) / float32(keyfileTotal)
-					giu.Update()
+					status.progress = float32(keyfileDone) / float32(keyfileTotal)
 				}
 				if err := fin.Close(); err != nil {
 					panic(err)
@@ -1868,7 +1273,7 @@ func work() {
 			var keyfileDone int
 
 			// For each keyfile...
-			for _, path := range keyfiles {
+			for _, path := range state.keyfiles {
 				fin, err := os.Open(path)
 				if err != nil {
 					panic(err)
@@ -1887,8 +1292,7 @@ func work() {
 
 					// Update progress
 					keyfileDone += size
-					progress = float32(keyfileDone) / float32(keyfileTotal)
-					giu.Update()
+					status.progress = float32(keyfileDone) / float32(keyfileTotal)
 				}
 				if err := fin.Close(); err != nil {
 					panic(err)
@@ -1915,8 +1319,7 @@ func work() {
 		}
 	}
 
-	popupStatus = "Calculating values..."
-	giu.Update()
+	status.popup = "Calculating values..."
 
 	// Single HKDF stream: derive header subkey first (v2), then payload subkeys and rekeying
 	var unifiedKDF io.Reader
@@ -1924,7 +1327,7 @@ func work() {
 	var isLegacyV1 bool
 
 	// Compute or verify header auth (v2: HMAC over header; v1: SHA3-512(key))
-	if mode == "encrypt" {
+	if state.mode == "encrypt" {
 		// v2 format for new volumes
 		unifiedKDF = hkdf.New(sha3.New256, key, hkdfSalt, nil)
 		subkeyHeader := make([]byte, 64)
@@ -1935,15 +1338,25 @@ func work() {
 
 		// Reconstruct flags
 		flagsHeader := make([]byte, 5)
-		if paranoid { flagsHeader[0] = 1 }
-		if len(keyfiles) > 0 { flagsHeader[1] = 1 }
-		if keyfileOrdered { flagsHeader[2] = 1 }
-		if reedsolo { flagsHeader[3] = 1 }
-		if total%int64(MiB) >= int64(MiB)-128 { flagsHeader[4] = 1 }
+		if state.paranoid {
+			flagsHeader[0] = 1
+		}
+		if len(state.keyfiles) > 0 {
+			flagsHeader[1] = 1
+		}
+		if state.keyfileOrdered {
+			flagsHeader[2] = 1
+		}
+		if state.reedSolomon {
+			flagsHeader[3] = 1
+		}
+		if total%int64(MiB) >= int64(MiB)-128 {
+			flagsHeader[4] = 1
+		}
 
 		macHeader.Write([]byte(version))
-		macHeader.Write([]byte(fmt.Sprintf("%05d", len(comments))))
-		macHeader.Write([]byte(comments))
+		macHeader.Write([]byte(fmt.Sprintf("%05d", len(state.comments))))
+		macHeader.Write([]byte(state.comments))
 		macHeader.Write(flagsHeader)
 		macHeader.Write(salt)
 		macHeader.Write(hkdfSalt)
@@ -1954,7 +1367,7 @@ func work() {
 		keyHash = macHeader.Sum(nil)
 	} else {
 		// Decrypt path: check which version produced the volume
-		isLegacyV1 = bytes.HasPrefix(headerVersion, []byte("v1."))
+		isLegacyV1 := bytes.HasPrefix(headerVersion, []byte("v1."))
 		if isLegacyV1 {
 			// v1 compatibility: header stores SHA3-512(key)
 			tmp := sha3.New512()
@@ -1972,37 +1385,37 @@ func work() {
 				incorrect = !keyCorrect || !keyfileCorrect
 			}
 			if incorrect {
-				if keep {
-					kept = true
+				if state.keep {
+					state.kept = true
 				} else {
 					if !keyCorrect {
-						mainStatus = "The provided password is incorrect"
+						status.main = "The provided password is incorrect"
 					} else {
-						if keyfileOrdered {
-							mainStatus = "Incorrect keyfiles or ordering"
+						if state.keyfileOrdered {
+							status.main = "Incorrect keyfiles or ordering"
 						} else {
-							mainStatus = "Incorrect keyfiles"
+							status.main = "Incorrect keyfiles"
 						}
-						if deniability {
+						if state.deniability {
 							fin.Close()
-							os.Remove(inputFile)
-							inputFile = strings.TrimSuffix(inputFile, ".tmp")
+							os.Remove(state.inputFile)
+							state.inputFile = strings.TrimSuffix(state.inputFile, ".tmp")
 						}
 					}
-					broken(fin, nil, mainStatus, true)
-					if recombine {
-						inputFile = inputFileOld
+					broken(fin, nil, status.main, true)
+					if state.recombine {
+						state.inputFile = state.inputFileOld
 					}
 					return
 				}
 			}
 
 			// Create output file only after validation succeeds
-			fout, err = os.Create(outputFile + ".incomplete")
+			fout, err = os.Create(state.outputFile + ".incomplete")
 			if err != nil {
 				fin.Close()
-				if recombine {
-					os.Remove(inputFile)
+				if state.recombine {
+					os.Remove(state.inputFile)
 				}
 				accessDenied("Write")
 				return
@@ -2036,37 +1449,37 @@ func work() {
 			}
 
 			if incorrect {
-				if keep {
-					kept = true
+				if state.keep {
+					state.kept = true
 				} else {
 					if !headerValid {
-						mainStatus = "The password is incorrect or header is tampered"
+						status.main = "The password is incorrect or header is tampered"
 					} else {
-						if keyfileOrdered {
-							mainStatus = "Incorrect keyfiles or ordering"
+						if state.keyfileOrdered {
+							status.main = "Incorrect keyfiles or ordering"
 						} else {
-							mainStatus = "Incorrect keyfiles"
+							status.main = "Incorrect keyfiles"
 						}
-						if deniability {
+						if state.deniability {
 							fin.Close()
-							os.Remove(inputFile)
-							inputFile = strings.TrimSuffix(inputFile, ".tmp")
+							os.Remove(state.inputFile)
+							state.inputFile = strings.TrimSuffix(state.inputFile, ".tmp")
 						}
 					}
-					broken(fin, nil, mainStatus, true)
-					if recombine {
-						inputFile = inputFileOld
+					broken(fin, nil, status.main, true)
+					if state.recombine {
+						state.inputFile = state.inputFileOld
 					}
 					return
 				}
 			}
 
 			// Create the output file for decryption (after validation)
-			fout, err = os.Create(outputFile + ".incomplete")
+			fout, err = os.Create(state.outputFile + ".incomplete")
 			if err != nil {
 				fin.Close()
-				if recombine {
-					os.Remove(inputFile)
+				if state.recombine {
+					os.Remove(state.inputFile)
 				}
 				accessDenied("Write")
 				return
@@ -2074,14 +1487,14 @@ func work() {
 		}
 	}
 
-	if useKeyfiles && len(keyfiles) > 0 {
+	if useKeyfiles && len(state.keyfiles) > 0 {
 		// Prevent an even number of duplicate keyfiles
 		if bytes.Equal(keyfileKey, make([]byte, 32)) {
-			mainStatus = "Duplicate keyfiles detected"
-			mainStatusColor = RED
+			status.main = "Duplicate keyfiles detected"
+			status.mainColor = RED
 			fin.Close()
-			if len(allFiles) > 1 || len(onlyFolders) > 0 || compress {
-				os.Remove(inputFile)
+			if len(state.allFiles) > 1 || len(state.onlyFolders) > 0 || state.compress {
+				os.Remove(state.inputFile)
 			}
 			fout.Close()
 			os.Remove(fout.Name())
@@ -2112,7 +1525,7 @@ func work() {
 	if _, err := io.ReadFull(unifiedKDF, subkey); err != nil {
 		panic(errors.New("fatal hkdf.Read error"))
 	}
-	if paranoid {
+	if state.paranoid {
 		mac = hmac.New(sha3.New512, subkey) // HMAC-SHA3
 	} else {
 		mac, err = blake2b.New512(subkey) // Keyed BLAKE2b
@@ -2133,17 +1546,17 @@ func work() {
 	serpent := cipher.NewCTR(s, serpentIV)
 
 	// Start the main encryption process
-	canCancel = true
+	status.canCancel = true
 	startTime := time.Now()
 	tempZip := encryptedZipReader{
 		_r:      fin,
 		_cipher: tempZipCipherR,
 	}
 	for {
-		if !working {
+		if !status.working {
 			cancel(fin, fout)
-			if recombine || len(allFiles) > 1 || len(onlyFolders) > 0 || compress {
-				os.Remove(inputFile)
+			if state.recombine || len(state.allFiles) > 1 || len(state.onlyFolders) > 0 || state.compress {
+				os.Remove(state.inputFile)
 			}
 			os.Remove(fout.Name())
 			return
@@ -2151,7 +1564,7 @@ func work() {
 
 		// Read in data from the file
 		var src []byte
-		if mode == "decrypt" && reedsolo {
+		if state.mode == "decrypt" && state.reedSolomon {
 			src = make([]byte, MiB/128*136)
 		} else {
 			src = make([]byte, MiB)
@@ -2170,8 +1583,8 @@ func work() {
 		dst := make([]byte, len(src))
 
 		// Do the actual encryption
-		if mode == "encrypt" {
-			if paranoid {
+		if state.mode == "encrypt" {
+			if state.paranoid {
 				serpent.XORKeyStream(dst, src)
 				copy(src, dst)
 			}
@@ -2181,7 +1594,7 @@ func work() {
 				panic(err)
 			}
 
-			if reedsolo {
+			if state.reedSolomon {
 				copy(src, dst)
 				dst = nil
 				// If a full MiB is available
@@ -2202,7 +1615,7 @@ func work() {
 				}
 			}
 		} else { // Decryption
-			if reedsolo {
+			if state.reedSolomon {
 				copy(dst, src)
 				src = nil
 				// If a complete 1 MiB block is available
@@ -2211,8 +1624,8 @@ func work() {
 					for i := 0; i < MiB/128*136; i += 136 {
 						tmp, err := rsDecode(rs128, dst[i:i+136])
 						if err != nil {
-							if keep {
-								kept = true
+							if state.keep {
+								state.kept = true
 							} else {
 								broken(fin, fout, "The input file is irrecoverably damaged", false)
 								return
@@ -2224,10 +1637,9 @@ func work() {
 						src = append(src, tmp...)
 
 						if !fastDecode && i%17408 == 0 {
-							progress, speed, eta = statify(int64(done+i), total, startTime)
-							progressInfo = fmt.Sprintf("%.2f%%", progress*100)
-							popupStatus = fmt.Sprintf("Repairing at %.2f MiB/s (ETA: %s)", speed, eta)
-							giu.Update()
+							status.progress, status.speed, status.eta = statify(int64(done+i), total, startTime)
+							status.progressInfo = fmt.Sprintf("%.2f%%", status.progress*100)
+							status.popup = fmt.Sprintf("Repairing at %.2f MiB/s (ETA: %s)", status.speed, status.eta)
 						}
 					}
 				} else {
@@ -2236,8 +1648,8 @@ func work() {
 					for i := range chunks {
 						tmp, err := rsDecode(rs128, dst[i*136:(i+1)*136])
 						if err != nil {
-							if keep {
-								kept = true
+							if state.keep {
+								state.kept = true
 							} else {
 								broken(fin, fout, "The input file is irrecoverably damaged", false)
 								return
@@ -2246,18 +1658,17 @@ func work() {
 						src = append(src, tmp...)
 
 						if !fastDecode && i%128 == 0 {
-							progress, speed, eta = statify(int64(done+i*136), total, startTime)
-							progressInfo = fmt.Sprintf("%.2f%%", progress*100)
-							popupStatus = fmt.Sprintf("Repairing at %.2f MiB/s (ETA: %s)", speed, eta)
-							giu.Update()
+							status.progress, status.speed, status.eta = statify(int64(done+i*136), total, startTime)
+							status.progressInfo = fmt.Sprintf("%.2f%%", status.progress*100)
+							status.popup = fmt.Sprintf("Repairing at %.2f MiB/s (ETA: %s)", status.speed, status.eta)
 						}
 					}
 
 					// Unpad and decode the final partial chunk
 					tmp, err := rsDecode(rs128, dst[int(chunks)*136:])
 					if err != nil {
-						if keep {
-							kept = true
+						if state.keep {
+							state.kept = true
 						} else {
 							broken(fin, fout, "The input file is irrecoverably damaged", false)
 							return
@@ -2273,7 +1684,7 @@ func work() {
 			}
 			chacha.XORKeyStream(dst, src)
 
-			if paranoid {
+			if state.paranoid {
 				copy(src, dst)
 				serpent.XORKeyStream(dst, src)
 			}
@@ -2283,30 +1694,29 @@ func work() {
 		_, err = fout.Write(dst)
 		if err != nil {
 			insufficientSpace(fin, fout)
-			if recombine || len(allFiles) > 1 || len(onlyFolders) > 0 || compress {
-				os.Remove(inputFile)
+			if state.recombine || len(state.allFiles) > 1 || len(state.onlyFolders) > 0 || state.compress {
+				os.Remove(state.inputFile)
 			}
 			os.Remove(fout.Name())
 			return
 		}
 
 		// Update stats
-		if mode == "decrypt" && reedsolo {
+		if state.mode == "decrypt" && state.reedSolomon {
 			done += MiB / 128 * 136
 		} else {
 			done += MiB
 		}
 		counter += MiB
-		progress, speed, eta = statify(int64(done), total, startTime)
-		progressInfo = fmt.Sprintf("%.2f%%", progress*100)
-		if mode == "encrypt" {
-			popupStatus = fmt.Sprintf("Encrypting at %.2f MiB/s (ETA: %s)", speed, eta)
+		status.progress, status.speed, status.eta = statify(int64(done), total, startTime)
+		status.progressInfo = fmt.Sprintf("%.2f%%", status.progress*100)
+		if state.mode == "encrypt" {
+			status.popup = fmt.Sprintf("Encrypting at %.2f MiB/s (ETA: %s)", status.speed, status.eta)
 		} else {
 			if fastDecode {
-				popupStatus = fmt.Sprintf("Decrypting at %.2f MiB/s (ETA: %s)", speed, eta)
+				status.popup = fmt.Sprintf("Decrypting at %.2f MiB/s (ETA: %s)", status.speed, status.eta)
 			}
 		}
-		giu.Update()
 
 		// Change nonce/IV after 60 GiB to prevent overflow
 		if counter >= 60*GiB {
@@ -2332,16 +1742,14 @@ func work() {
 		}
 	}
 
-	progress = 0
-	progressInfo = ""
-	giu.Update()
+	status.progress = 0
+	status.progressInfo = ""
 
-	if mode == "encrypt" {
-		popupStatus = "Writing values..."
-		giu.Update()
+	if state.mode == "encrypt" {
+		status.popup = "Writing values..."
 
 		// Seek back to header and write important values
-		if _, err := fout.Seek(int64(309+len(comments)*3), 0); err != nil {
+		if _, err := fout.Seek(int64(309+len(state.comments)*3), 0); err != nil {
 			panic(err)
 		}
 		if _, err := fout.Write(rsEncode(rs64, keyHash)); err != nil {
@@ -2354,13 +1762,12 @@ func work() {
 			panic(err)
 		}
 	} else {
-		popupStatus = "Comparing values..."
-		giu.Update()
+		status.popup = "Comparing values..."
 
 		// Validate the authenticity of decrypted data
 		if subtle.ConstantTimeCompare(mac.Sum(nil), authTag) == 0 {
 			// Decrypt again but this time rebuilding the input data
-			if reedsolo && fastDecode {
+			if state.reedSolomon && fastDecode {
 				fastDecode = false
 				fin.Close()
 				fout.Close()
@@ -2368,8 +1775,8 @@ func work() {
 				return
 			}
 
-			if keep {
-				kept = true
+			if state.keep {
+				state.kept = true
 			} else {
 				broken(fin, fout, "The input file is damaged or modified", false)
 				return
@@ -2384,30 +1791,29 @@ func work() {
 		panic(err)
 	}
 
-	if err := os.Rename(outputFile+".incomplete", outputFile); err != nil {
+	if err := os.Rename(state.outputFile+".incomplete", state.outputFile); err != nil {
 		panic(err)
 	}
 
 	// Add plausible deniability
-	if mode == "encrypt" && deniability {
-		popupStatus = "Adding plausible deniability..."
-		canCancel = false
-		giu.Update()
+	if state.mode == "encrypt" && state.deniability {
+		status.popup = "Adding plausible deniability..."
+		status.canCancel = false
 
 		// Get size of volume for showing progress
-		stat, err := os.Stat(outputFile)
+		stat, err := os.Stat(state.outputFile)
 		if err != nil {
 			panic(err)
 		}
 		total := stat.Size()
 
 		// Rename the output volume to free up the filename
-		os.Rename(outputFile, outputFile+".tmp")
-		fin, err := os.Open(outputFile + ".tmp")
+		os.Rename(state.outputFile, state.outputFile+".tmp")
+		fin, err := os.Open(state.outputFile + ".tmp")
 		if err != nil {
 			panic(err)
 		}
-		fout, err := os.Create(outputFile + ".incomplete")
+		fout, err := os.Create(state.outputFile + ".incomplete")
 		if err != nil {
 			panic(err)
 		}
@@ -2432,7 +1838,7 @@ func work() {
 		}
 
 		// Generate key and XChaCha20
-		key := argon2.IDKey([]byte(password), salt, 4, 1<<20, 4, 32)
+		key := argon2.IDKey([]byte(state.password), salt, 4, 1<<20, 4, 32)
 		if bytes.Equal(key, make([]byte, 32)) {
 			panic(errors.New("fatal crypto/argon2 error"))
 		}
@@ -2459,8 +1865,7 @@ func work() {
 			// Update stats
 			done += size
 			counter += MiB
-			progress = float32(float64(done) / float64(total))
-			giu.Update()
+			status.progress = float32(float64(done) / float64(total))
 
 			// Change nonce after 60 GiB to prevent overflow
 			if counter >= 60*GiB {
@@ -2486,36 +1891,36 @@ func work() {
 		if err := os.Remove(fin.Name()); err != nil {
 			panic(err)
 		}
-		if err := os.Rename(outputFile+".incomplete", outputFile); err != nil {
+		if err := os.Rename(state.outputFile+".incomplete", state.outputFile); err != nil {
 			panic(err)
 		}
-		canCancel = true
-		giu.Update()
+		status.canCancel = true
+
 	}
 
 	// Split the file into chunks
-	if split {
+	if state.split {
 		var splitted []string
-		stat, err := os.Stat(outputFile)
+		stat, err := os.Stat(state.outputFile)
 		if err != nil {
 			panic(err)
 		}
 		size := stat.Size()
 		finishedFiles := 0
 		finishedBytes := 0
-		chunkSize, err := strconv.Atoi(splitSize)
+		chunkSize, err := strconv.Atoi(state.splitSize)
 		if err != nil {
 			panic(err)
 		}
 
 		// Calculate chunk size
-		if splitSelected == 0 {
+		if state.splitSelected == 0 {
 			chunkSize *= KiB
-		} else if splitSelected == 1 {
+		} else if state.splitSelected == 1 {
 			chunkSize *= MiB
-		} else if splitSelected == 2 {
+		} else if state.splitSelected == 2 {
 			chunkSize *= GiB
-		} else if splitSelected == 3 {
+		} else if state.splitSelected == 3 {
 			chunkSize *= TiB
 		} else {
 			chunkSize = int(math.Ceil(float64(size) / float64(chunkSize)))
@@ -2523,17 +1928,16 @@ func work() {
 
 		// Get the number of required chunks
 		chunks := int(math.Ceil(float64(size) / float64(chunkSize)))
-		progressInfo = fmt.Sprintf("%d/%d", finishedFiles+1, chunks)
-		giu.Update()
+		status.progressInfo = fmt.Sprintf("%d/%d", finishedFiles+1, chunks)
 
 		// Open the volume for reading
-		fin, err := os.Open(outputFile)
+		fin, err := os.Open(state.outputFile)
 		if err != nil {
 			panic(err)
 		}
 
 		// Delete existing chunks to prevent mixed chunks
-		names, err := filepath.Glob(outputFile + ".*")
+		names, err := filepath.Glob(state.outputFile + ".*")
 		if err != nil {
 			panic(err)
 		}
@@ -2547,7 +1951,7 @@ func work() {
 		startTime := time.Now()
 		for i := range chunks {
 			// Make the chunk
-			fout, _ := os.Create(fmt.Sprintf("%s.%d.incomplete", outputFile, i))
+			fout, _ := os.Create(fmt.Sprintf("%s.%d.incomplete", state.outputFile, i))
 			done := 0
 
 			// Copy data into the chunk
@@ -2561,16 +1965,16 @@ func work() {
 				if err != nil {
 					break
 				}
-				if !working {
+				if !status.working {
 					cancel(fin, fout)
-					if len(allFiles) > 1 || len(onlyFolders) > 0 || compress {
-						os.Remove(inputFile)
+					if len(state.allFiles) > 1 || len(state.onlyFolders) > 0 || state.compress {
+						os.Remove(state.inputFile)
 					}
-					os.Remove(outputFile)
+					os.Remove(state.outputFile)
 					for _, j := range splitted { // Remove existing chunks
 						os.Remove(j)
 					}
-					os.Remove(fmt.Sprintf("%s.%d", outputFile, i))
+					os.Remove(fmt.Sprintf("%s.%d", state.outputFile, i))
 					return
 				}
 
@@ -2578,14 +1982,14 @@ func work() {
 				_, err = fout.Write(data)
 				if err != nil {
 					insufficientSpace(fin, fout)
-					if len(allFiles) > 1 || len(onlyFolders) > 0 || compress {
-						os.Remove(inputFile)
+					if len(state.allFiles) > 1 || len(state.onlyFolders) > 0 || state.compress {
+						os.Remove(state.inputFile)
 					}
-					os.Remove(outputFile)
+					os.Remove(state.outputFile)
 					for _, j := range splitted { // Remove existing chunks
 						os.Remove(j)
 					}
-					os.Remove(fmt.Sprintf("%s.%d", outputFile, i))
+					os.Remove(fmt.Sprintf("%s.%d", state.outputFile, i))
 					return
 				}
 				done += read
@@ -2595,9 +1999,8 @@ func work() {
 
 				// Update stats
 				finishedBytes += read
-				progress, speed, eta = statify(int64(finishedBytes), int64(size), startTime)
-				popupStatus = fmt.Sprintf("Splitting at %.2f MiB/s (ETA: %s)", speed, eta)
-				giu.Update()
+				status.progress, status.speed, status.eta = statify(int64(finishedBytes), int64(size), startTime)
+				status.popup = fmt.Sprintf("Splitting at %.2f MiB/s (ETA: %s)", status.speed, status.eta)
 			}
 			if err := fout.Close(); err != nil {
 				panic(err)
@@ -2608,18 +2011,17 @@ func work() {
 			if finishedFiles == chunks {
 				finishedFiles--
 			}
-			splitted = append(splitted, fmt.Sprintf("%s.%d", outputFile, i))
-			progressInfo = fmt.Sprintf("%d/%d", finishedFiles+1, chunks)
-			giu.Update()
+			splitted = append(splitted, fmt.Sprintf("%s.%d", state.outputFile, i))
+			status.progressInfo = fmt.Sprintf("%d/%d", finishedFiles+1, chunks)
 		}
 
 		if err := fin.Close(); err != nil {
 			panic(err)
 		}
-		if err := os.Remove(outputFile); err != nil {
+		if err := os.Remove(state.outputFile); err != nil {
 			panic(err)
 		}
-		names, err = filepath.Glob(outputFile + ".*.incomplete")
+		names, err = filepath.Glob(state.outputFile + ".*.incomplete")
 		if err != nil {
 			panic(err)
 		}
@@ -2630,125 +2032,121 @@ func work() {
 		}
 	}
 
-	canCancel = false
-	progress = 0
-	progressInfo = ""
-	giu.Update()
+	status.canCancel = false
+	status.progress = 0
+	status.progressInfo = ""
 
 	// Delete temporary files used during encryption and decryption
-	if recombine || len(allFiles) > 1 || len(onlyFolders) > 0 || compress {
-		if err := os.Remove(inputFile); err != nil {
+	if state.recombine || len(state.allFiles) > 1 || len(state.onlyFolders) > 0 || state.compress {
+		if err := os.Remove(state.inputFile); err != nil {
 			panic(err)
 		}
-		if deniability {
-			os.Remove(strings.TrimSuffix(inputFile, ".tmp"))
+		if state.deniability {
+			os.Remove(strings.TrimSuffix(state.inputFile, ".tmp"))
 		}
 	}
 
 	// Delete the input files if the user chooses
-	if delete {
-		popupStatus = "Deleting files..."
-		giu.Update()
+	if state.delete {
+		status.popup = "Deleting files..."
 
-		if mode == "decrypt" {
-			if recombine { // Remove each chunk of volume
+		if state.mode == "decrypt" {
+			if state.recombine { // Remove each chunk of volume
 				i := 0
 				for {
-					_, err := os.Stat(fmt.Sprintf("%s.%d", inputFileOld, i))
+					_, err := os.Stat(fmt.Sprintf("%s.%d", state.inputFileOld, i))
 					if err != nil {
 						break
 					}
-					if err := os.Remove(fmt.Sprintf("%s.%d", inputFileOld, i)); err != nil {
+					if err := os.Remove(fmt.Sprintf("%s.%d", state.inputFileOld, i)); err != nil {
 						panic(err)
 					}
 					i++
 				}
 			} else {
-				if err := os.Remove(inputFile); err != nil {
+				if err := os.Remove(state.inputFile); err != nil {
 					panic(err)
 				}
-				if deniability {
-					if err := os.Remove(strings.TrimSuffix(inputFile, ".tmp")); err != nil {
+				if state.deniability {
+					if err := os.Remove(strings.TrimSuffix(state.inputFile, ".tmp")); err != nil {
 						panic(err)
 					}
 				}
 			}
 		} else {
-			for _, i := range onlyFiles {
+			for _, i := range state.onlyFiles {
 				if err := os.Remove(i); err != nil {
 					panic(err)
 				}
 			}
-			for _, i := range onlyFolders {
+			for _, i := range state.onlyFolders {
 				if err := os.RemoveAll(i); err != nil {
 					panic(err)
 				}
 			}
 		}
 	}
-	if mode == "decrypt" && deniability {
-		os.Remove(inputFile)
+	if state.mode == "decrypt" && state.deniability {
+		os.Remove(state.inputFile)
 	}
 
-	if mode == "decrypt" && !kept && autoUnzip {
-		showProgress = true
-		popupStatus = "Unzipping..."
-		giu.Update()
+	if state.mode == "decrypt" && !state.kept && state.autoUnzip {
+		status.showProgress = true
+		status.popup = "Unzipping..."
 
-		if err := unpackArchive(outputFile); err != nil {
-			mainStatus = "Auto unzipping failed!"
-			mainStatusColor = RED
-			giu.Update()
+		if err := unpackArchive(state.outputFile); err != nil {
+			status.main = "Auto unzipping failed!"
+			status.mainColor = RED
 			return
 		}
 
-		if err := os.Remove(outputFile); err != nil {
+		if err := os.Remove(state.outputFile); err != nil {
 			panic(err)
 		}
 	}
 
 	// All done, reset the UI
-	oldKept := kept
+	oldKept := state.kept
 	resetUI()
-	kept = oldKept
+	state.kept = oldKept
 
 	// If the user chose to keep a corrupted/modified file, let them know
-	if kept {
-		mainStatus = "The input file was modified. Please be careful"
-		mainStatusColor = YELLOW
+	if state.kept {
+		status.main = "The input file was modified. Please be careful"
+		status.mainColor = YELLOW
 	} else {
-		mainStatus = "Completed"
-		mainStatusColor = GREEN
+		status.main = "Completed"
+		status.mainColor = GREEN
 	}
 }
 
 // If the OS denies reading or writing to a file
 func accessDenied(s string) {
-	mainStatus = s + " access denied by operating system"
-	mainStatusColor = RED
+	status.main = s + " access denied by operating system"
+	status.mainColor = RED
 }
 
 // If there isn't enough disk space
 func insufficientSpace(fin *os.File, fout *os.File) {
 	fin.Close()
 	fout.Close()
-	mainStatus = "Insufficient disk space"
-	mainStatusColor = RED
+	status.main = "Insufficient disk space"
+	status.mainColor = RED
 }
 
 // If corruption is detected during decryption
 func broken(fin *os.File, fout *os.File, message string, keepOutput bool) {
 	fin.Close()
 	fout.Close()
-	mainStatus = message
-	mainStatusColor = RED
+	status.main = message
+	status.mainColor = RED
 
 	// Clean up files since decryption failed
-	if recombine {
-		os.Remove(inputFile)
+	if state.recombine {
+		os.Remove(state.inputFile)
 	}
 	if !keepOutput {
-		os.Remove(outputFile)
+		os.Remove(state.outputFile)
 	}
 }
 
@@ -2756,68 +2154,66 @@ func broken(fin *os.File, fout *os.File, message string, keepOutput bool) {
 func cancel(fin *os.File, fout *os.File) {
 	fin.Close()
 	fout.Close()
-	mainStatus = "Operation cancelled by user"
-	mainStatusColor = WHITE
+	status.main = "Operation cancelled by user"
+	status.mainColor = WHITE
 }
 
 // Reset the UI to a clean state with nothing selected or checked
 func resetUI() {
-	imgui.ClearActiveID()
-	mode = ""
+	state.mode = ""
 
-	inputFile = ""
-	inputFileOld = ""
-	outputFile = ""
-	onlyFiles = nil
-	onlyFolders = nil
-	allFiles = nil
-	inputLabel = "Drop files and folders into this window"
+	state.inputFile = ""
+	state.inputFileOld = ""
+	state.outputFile = ""
+	state.onlyFiles = nil
+	state.onlyFolders = nil
+	state.allFiles = nil
+	status.inputLabel = "Drop files and folders into this window"
 
-	password = ""
-	cpassword = ""
-	passwordState = giu.InputTextFlagsPassword
-	passwordStateLabel = "Show"
+	state.password = ""
+	state.confirmPassword = ""
+	status.passwordHide = true
 
-	passgenLength = 32
-	passgenUpper = true
-	passgenLower = true
-	passgenNums = true
-	passgenSymbols = true
-	passgenCopy = true
+	state.passgenLength = 32
+	state.passgenUpper = true
+	state.passgenLower = true
+	state.passgenNums = true
+	state.passgenSymbols = true
+	state.passgenCopy = true
 
-	keyfile = false
-	keyfiles = nil
-	keyfileOrdered = false
-	keyfileLabel = "None selected"
+	state.keyfile = false
+	state.keyfiles = nil
+	state.keyfileOrdered = false
+	status.keyfileLabel = "None selected"
 
-	comments = ""
-	commentsLabel = "Comments:"
-	commentsDisabled = false
+	state.comments = ""
+	status.commentsLabel = "Comments:"
+	status.commentsDisabled = false
 
-	paranoid = false
-	reedsolo = false
-	deniability = false
-	recursively = false
-	split = false
-	splitSize = ""
-	splitSelected = 1
-	recombine = false
-	compress = false
-	delete = false
-	autoUnzip = false
-	sameLevel = false
-	keep = false
-	kept = false
+	state.paranoid = false
+	state.reedSolomon = false
+	state.deniability = false
+	state.recursively = false
+	state.split = false
+	state.splitSize = ""
+	state.splitSelected = 1
+	state.recombine = false
+	state.compress = false
+	state.delete = false
+	state.autoUnzip = false
+	state.sameLevel = false
+	state.keep = false
+	state.kept = false
 
-	startLabel = "Start"
-	mainStatus = "Ready"
-	mainStatusColor = WHITE
-	popupStatus = ""
-	requiredFreeSpace = 0
+	status.startLabel = "Start"
+	status.main = "ready"
+	status.mainColor = WHITE
+	status.popup = ""
+	status.requiredFreeSpace = 0
 
-	progress = 0
-	progressInfo = ""
-	giu.Update()
+	status.progress = 0
+	status.progressInfo = ""
+
 }
 
 // Reed-Solomon encoder
@@ -2871,27 +2267,30 @@ func unpad(data []byte) []byte {
 // Generate a cryptographically secure password
 func genPassword() string {
 	chars := ""
-	if passgenUpper {
+	if state.passgenUpper {
 		chars += "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	}
-	if passgenLower {
+	if state.passgenLower {
 		chars += "abcdefghijklmnopqrstuvwxyz"
 	}
-	if passgenNums {
+	if state.passgenNums {
 		chars += "1234567890"
 	}
-	if passgenSymbols {
+	if state.passgenSymbols {
 		chars += "-=_+!@#$^&()?<>"
 	}
-	tmp := make([]byte, passgenLength)
-	for i := range int(passgenLength) {
-		j, _ := rand.Int(rand.Reader, big.NewInt(int64(len(chars))))
-		tmp[i] = chars[j.Int64()]
+
+	max := big.NewInt(int64(len(chars)))
+	tmp := make([]byte, state.passgenLength)
+	for i := range tmp {
+		idx, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			return ""
+		}
+		tmp[i] = chars[idx.Int64()]
 	}
-	if passgenCopy {
-		giu.Context.GetPlatform().SetClipboard(string(tmp))
-	}
-	return string(tmp)
+	result := string(tmp)
+	return result
 }
 
 // Convert done, total, and starting time to progress, speed, and ETA
@@ -2941,7 +2340,7 @@ func unpackArchive(zipPath string) error {
 	}
 
 	var extractDir string
-	if sameLevel {
+	if state.sameLevel {
 		extractDir = filepath.Dir(zipPath)
 	} else {
 		extractDir = filepath.Join(filepath.Dir(zipPath), strings.TrimSuffix(filepath.Base(zipPath), ".zip"))
@@ -3006,10 +2405,9 @@ func unpackArchive(zipPath string) error {
 				}
 
 				done += int64(n)
-				progress, speed, eta = statify(done, totalSize, startTime)
-				progressInfo = fmt.Sprintf("%d/%d", i+1, len(reader.File))
-				popupStatus = fmt.Sprintf("Unpacking at %.2f MiB/s (ETA: %s)", speed, eta)
-				giu.Update()
+				status.progress, status.speed, status.eta = statify(done, totalSize, startTime)
+				status.progressInfo = fmt.Sprintf("%d/%d", i+1, len(reader.File))
+				status.popup = fmt.Sprintf("Unpacking at %.2f MiB/s (ETA: %s)", status.speed, status.eta)
 			}
 			if readErr != nil {
 				if readErr == io.EOF {
@@ -3023,33 +2421,4 @@ func unpackArchive(zipPath string) error {
 	}
 
 	return nil
-}
-
-func main() {
-	if rsErr1 != nil || rsErr2 != nil || rsErr3 != nil || rsErr4 != nil || rsErr5 != nil || rsErr6 != nil || rsErr7 != nil {
-		panic(errors.New("rs failed to init"))
-	}
-	// Create the main window
-	window = giu.NewMasterWindow("Picocrypt NG "+version[1:], 318, 507, giu.MasterWindowFlagsNotResizable)
-
-	// Start the dialog module
-	dialog.Init()
-
-	// Set callbacks
-	window.SetDropCallback(onDrop)
-	window.SetCloseCallback(func() bool {
-		return !working && !showProgress
-	})
-
-	// Set universal DPI
-	dpi = giu.Context.GetPlatform().GetContentScale()
-
-	// Simulate dropping command line arguments
-	flag.Parse()
-	if flag.NArg() > 0 {
-		onDrop(flag.Args())
-	}
-
-	// Start the UI
-	window.Run(draw)
 }

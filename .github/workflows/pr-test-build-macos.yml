@@ -21,10 +21,6 @@ jobs:
         check-latest: true
         cache: false
 
-    - name: Install packages
-      run: |
-        brew install glfw glew
-
     - name: Install dependencies
       run: |
         cd src
@@ -33,7 +29,7 @@ jobs:
     - name: Build
       run: |
         cd src
-        go build -v -ldflags="-s -w" -o Picocrypt-NG Picocrypt-NG.go
+        go build -v -ldflags="-s -w" -o Picocrypt-NG gui.go work.go
       env:
         CGO_ENABLED: 1
 
