@@ -1,5 +1,16 @@
 package main
 
+/*
+
+Picocrypt NG v2.00
+Copyright (c) Picocrypt NG developers
+Released under GPL-3.0-only
+https://github.com/Picocrypt-NG/Picocrypt-NG
+
+~ In cryptography we trust ~
+
+ */
+
 import (
 	"archive/zip"
 	"bytes"
