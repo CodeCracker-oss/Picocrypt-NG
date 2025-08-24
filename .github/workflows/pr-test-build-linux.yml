@@ -38,7 +38,6 @@ jobs:
       run: |
         cd src
         go build -v -ldflags="-s -w" -o Picocrypt-NG gui.go work.go
-        CGO_ENABLED: 1
         GOAMD64: v1
 
     - name: Compress with upx
