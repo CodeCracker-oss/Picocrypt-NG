@@ -774,8 +774,6 @@ func run(w *app.Window) error {
 									continue
 								}
 
-
-
 								// Check if output file already exists
 								_, err = os.Stat(state.outputFile)
 
@@ -802,74 +800,73 @@ func run(w *app.Window) error {
 										continue
 									}
 								}
-									status.showProgress = true
-									fastDecode = true
-									status.canCancel = true
-									currentView = ViewProgress
-									if !state.recursively {
-										go func() {
-											work()
-											status.working = false
-											status.showProgress = false
-											currentView = ViewStart
+								status.showProgress = true
+								fastDecode = true
+								status.canCancel = true
+								currentView = ViewProgress
+								if !state.recursively {
+									go func() {
+										work()
+										status.working = false
+										status.showProgress = false
+										currentView = ViewStart
 
-										}()
-									} else {
-										// Store variables as they will be cleared
-										oldPassword := state.password
-										oldKeyfile := state.keyfile
-										oldKeyfiles := state.keyfiles
-										oldKeyfileOrdered := state.keyfileOrdered
-										oldKeyfileLabel := status.keyfileLabel
-										oldComments := state.comments
-										oldParanoid := state.paranoid
-										oldReedsolo := state.reedSolomon
-										oldDeniability := state.deniability
-										oldSplit := state.split
-										oldSplitSize := state.splitSize
-										oldSplitSelected := state.splitSelected
-										oldDelete := state.delete
-										files := state.allFiles
-										go func() {
-											for _, file := range files {
-												// Simulate dropping the file
-												onDrop([]string{file})
+									}()
+								} else {
+									// Store variables as they will be cleared
+									oldPassword := state.password
+									oldKeyfile := state.keyfile
+									oldKeyfiles := state.keyfiles
+									oldKeyfileOrdered := state.keyfileOrdered
+									oldKeyfileLabel := status.keyfileLabel
+									oldComments := state.comments
+									oldParanoid := state.paranoid
+									oldReedsolo := state.reedSolomon
+									oldDeniability := state.deniability
+									oldSplit := state.split
+									oldSplitSize := state.splitSize
+									oldSplitSelected := state.splitSelected
+									oldDelete := state.delete
+									files := state.allFiles
+									go func() {
+										for _, file := range files {
+											// Simulate dropping the file
+											onDrop([]string{file})
 
-												// Restore variables and options
-												state.password = oldPassword
-												state.confirmPassword = oldPassword
-												state.keyfile = oldKeyfile
-												state.keyfiles = oldKeyfiles
-												state.keyfileOrdered = oldKeyfileOrdered
-												status.keyfileLabel = oldKeyfileLabel
-												state.comments = oldComments
-												state.paranoid = oldParanoid
-												state.reedSolomon = oldReedsolo
-												if state.mode != "decrypt" {
-													state.deniability = oldDeniability
-												}
-												state.split = oldSplit
-												state.splitSize = oldSplitSize
-												state.splitSelected = oldSplitSelected
-												state.delete = oldDelete
-
-												work()
-												if !status.working {
-													resetUI()
-													cancel(nil, nil)
-													status.showProgress = false
-													currentView = ViewStart
-													continue
-												}
+											// Restore variables and options
+											state.password = oldPassword
+											state.confirmPassword = oldPassword
+											state.keyfile = oldKeyfile
+											state.keyfiles = oldKeyfiles
+											state.keyfileOrdered = oldKeyfileOrdered
+											status.keyfileLabel = oldKeyfileLabel
+											state.comments = oldComments
+											state.paranoid = oldParanoid
+											state.reedSolomon = oldReedsolo
+											if state.mode != "decrypt" {
+												state.deniability = oldDeniability
 											}
-											status.working = false
-											status.showProgress = false
-											currentView = ViewStart
-											w.Invalidate()
-										}()
-									}
-								}
+											state.split = oldSplit
+											state.splitSize = oldSplitSize
+											state.splitSelected = oldSplitSelected
+											state.delete = oldDelete
 
+											work()
+											if !status.working {
+												resetUI()
+												cancel(nil, nil)
+												status.showProgress = false
+												currentView = ViewStart
+												continue
+											}
+										}
+										status.working = false
+										status.showProgress = false
+										currentView = ViewStart
+										w.Invalidate()
+									}()
+								}
+							}
 
 							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -1760,74 +1757,73 @@ func run(w *app.Window) error {
 										continue
 									}
 								}
-									status.showProgress = true
-									fastDecode = true
-									status.canCancel = true
-									currentView = ViewProgress
-									if !state.recursively {
-										go func() {
-											work()
-											status.working = false
-											status.showProgress = false
-											currentView = ViewStart
+								status.showProgress = true
+								fastDecode = true
+								status.canCancel = true
+								currentView = ViewProgress
+								if !state.recursively {
+									go func() {
+										work()
+										status.working = false
+										status.showProgress = false
+										currentView = ViewStart
 
-										}()
-									} else {
-										// Store variables as they will be cleared
-										oldPassword := state.password
-										oldKeyfile := state.keyfile
-										oldKeyfiles := state.keyfiles
-										oldKeyfileOrdered := state.keyfileOrdered
-										oldKeyfileLabel := status.keyfileLabel
-										oldComments := state.comments
-										oldParanoid := state.paranoid
-										oldReedsolo := state.reedSolomon
-										oldDeniability := state.deniability
-										oldSplit := state.split
-										oldSplitSize := state.splitSize
-										oldSplitSelected := state.splitSelected
-										oldDelete := state.delete
-										files := state.allFiles
-										go func() {
-											for _, file := range files {
-												// Simulate dropping the file
-												onDrop([]string{file})
+									}()
+								} else {
+									// Store variables as they will be cleared
+									oldPassword := state.password
+									oldKeyfile := state.keyfile
+									oldKeyfiles := state.keyfiles
+									oldKeyfileOrdered := state.keyfileOrdered
+									oldKeyfileLabel := status.keyfileLabel
+									oldComments := state.comments
+									oldParanoid := state.paranoid
+									oldReedsolo := state.reedSolomon
+									oldDeniability := state.deniability
+									oldSplit := state.split
+									oldSplitSize := state.splitSize
+									oldSplitSelected := state.splitSelected
+									oldDelete := state.delete
+									files := state.allFiles
+									go func() {
+										for _, file := range files {
+											// Simulate dropping the file
+											onDrop([]string{file})
 
-												// Restore variables and options
-												state.password = oldPassword
-												state.confirmPassword = oldPassword
-												state.keyfile = oldKeyfile
-												state.keyfiles = oldKeyfiles
-												state.keyfileOrdered = oldKeyfileOrdered
-												status.keyfileLabel = oldKeyfileLabel
-												state.comments = oldComments
-												state.paranoid = oldParanoid
-												state.reedSolomon = oldReedsolo
-												if state.mode != "decrypt" {
-													state.deniability = oldDeniability
-												}
-												state.split = oldSplit
-												state.splitSize = oldSplitSize
-												state.splitSelected = oldSplitSelected
-												state.delete = oldDelete
-
-												work()
-												if !status.working {
-													resetUI()
-													cancel(nil, nil)
-													status.showProgress = false
-													currentView = ViewStart
-													continue
-												}
+											// Restore variables and options
+											state.password = oldPassword
+											state.confirmPassword = oldPassword
+											state.keyfile = oldKeyfile
+											state.keyfiles = oldKeyfiles
+											state.keyfileOrdered = oldKeyfileOrdered
+											status.keyfileLabel = oldKeyfileLabel
+											state.comments = oldComments
+											state.paranoid = oldParanoid
+											state.reedSolomon = oldReedsolo
+											if state.mode != "decrypt" {
+												state.deniability = oldDeniability
 											}
-											status.working = false
-											status.showProgress = false
-											currentView = ViewStart
-											w.Invalidate()
-										}()
-									}
-								}
+											state.split = oldSplit
+											state.splitSize = oldSplitSize
+											state.splitSelected = oldSplitSelected
+											state.delete = oldDelete
 
+											work()
+											if !status.working {
+												resetUI()
+												cancel(nil, nil)
+												status.showProgress = false
+												currentView = ViewStart
+												continue
+											}
+										}
+										status.working = false
+										status.showProgress = false
+										currentView = ViewStart
+										w.Invalidate()
+									}()
+								}
+							}
 
 							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
