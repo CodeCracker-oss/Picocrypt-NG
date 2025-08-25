@@ -134,6 +134,12 @@ func scoreToProgress(score int) float32 {
 
 var mu sync.Mutex
 
+var startList = &widget.List{List: layout.List{Axis: layout.Vertical}}
+var encryptList = &widget.List{List: layout.List{Axis: layout.Vertical}}
+var generateList = &widget.List{List: layout.List{Axis: layout.Vertical}}
+var decryptList = &widget.List{List: layout.List{Axis: layout.Vertical}}
+var progressList = &widget.List{List: layout.List{Axis: layout.Vertical}}
+
 func main() {
 	passEditor.Mask = '*'
 	confirmEditor.Mask = '*'
@@ -145,7 +151,8 @@ func main() {
 
 	go func() {
 		w := new(app.Window)
-		w.Option(app.Size(unit.Dp(800), unit.Dp(600)))
+		w.Option(app.Size(unit.Dp(650), unit.Dp(700)))
+		w.Option(app.Title("Picocrypt NG"))
 		if err := run(w); err != nil {
 			log.Fatal(err)
 		}
@@ -178,44 +185,43 @@ func run(w *app.Window) error {
 					if gtx.Constraints.Max.X > maxW {
 						gtx.Constraints.Max.X = maxW
 					}
-					return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							lbl := material.Body1(th, "Select file(s) to encrypt or a volume to decrypt")
-							lbl.Color = colFg
-							return layout.Inset{Bottom: unit.Dp(16)}.Layout(gtx, lbl.Layout)
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							for selectFiles.Clicked(gtx) {
-								files, err := zenity.SelectFileMultiple(
-									zenity.Filename(""),
-								)
-								if err != nil {
-									if err == zenity.ErrCanceled {
-										continue
+
+					// Use material.List to get a scrollbar visual.
+					return material.List(th, startList).Layout(gtx, 1, func(gtx layout.Context, index int) layout.Dimensions {
+						return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								lbl := material.Body1(th, "Select file(s) to encrypt or a volume to decrypt")
+								lbl.Color = colFg
+								return layout.Inset{Bottom: unit.Dp(16)}.Layout(gtx, lbl.Layout)
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								for selectFiles.Clicked(gtx) {
+									files, err := zenity.SelectFileMultiple(
+										zenity.Filename(""),
+									)
+									if err != nil {
+										if err == zenity.ErrCanceled {
+											continue
+										}
+										log.Fatalf("dialog error: %v", err)
 									}
-									log.Fatalf("dialog error: %v", err)
+									onDrop(files)
+									if state.mode == "encrypt" {
+										currentView = ViewEncrypt
+									} else {
+										currentView = ViewDecrypt
+									}
 								}
-
-								fmt.Printf("Selected %d files:\n", len(files))
-								for i, f := range files {
-									fmt.Printf("%d: %s\n", i+1, f)
-								}
-
-								onDrop(files)
-
-								if state.mode == "encrypt" {
-									currentView = ViewEncrypt
-								} else {
-									currentView = ViewDecrypt
-								}
-							}
-							btn := material.Button(th, selectFiles, "Select file(s)")
-							btn.Background = colPrimary
-							btn.Color = colContrastFg
-							return btn.Layout(gtx)
-						}),
-					)
+								btn := material.Button(th, selectFiles, "Select file(s)")
+								btn.Background = colPrimary
+								btn.Color = colContrastFg
+								return btn.Layout(gtx)
+							}),
+							// add more children here; list will scroll and show a scrollbar
+						)
+					})
 				})
+
 			case ViewEncrypt:
 				layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 					maxW := gtx.Dp(unit.Dp(600))
@@ -267,656 +273,658 @@ func run(w *app.Window) error {
 						)
 					}
 
-					return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							h := material.H4(th, "Encrypt")
-							h.Color = colFg
-							return layout.Inset{Bottom: unit.Dp(20)}.Layout(gtx, h.Layout)
-						}),
-						layout.Rigid(passwordHeader),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							pw := passEditor.Text()
-							score := 0
-							if pw != "" {
-								score = zxcvbn.PasswordStrength(pw, nil).Score
-							}
-							passwordScore = score
-							progress := scoreToProgress(score)
-
-							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-									gtx.Constraints.Min.X = gtx.Constraints.Max.X
-									h := gtx.Dp(unit.Dp(40))
-									gtx.Constraints.Min.Y = h
-									gtx.Constraints.Max.Y = h
-									return layout.UniformInset(unit.Dp(4)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-										rect := imageRect(gtx.Constraints.Max.X, h)
-										paintFill(gtx, colSurface, rect)
-										e := material.Editor(th, passEditor, "")
-										e.Color = colFg
-										e.HintColor = colHint
-										return e.Layout(gtx)
-									})
-								}),
-
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									size := gtx.Dp(unit.Dp(36))
-									gtx.Constraints.Min.X = size
-									gtx.Constraints.Max.X = size
-									gtx.Constraints.Min.Y = size
-									gtx.Constraints.Max.Y = size
-
-									return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-										return material.ProgressCircle(th, progress).Layout(gtx)
-									})
-								}),
-							)
-						}),
-
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layout.Spacer{Height: unit.Dp(12)}.Layout(gtx)
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							pw := passEditor.Text()
-							confirm := confirmEditor.Text()
-							match := (pw != "" && pw == confirm)
-
-							var matchProgress float32
-							if match {
-								matchProgress = 1.0
-							} else {
-								matchProgress = 0.0
-							}
-
-							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-									gtx.Constraints.Min.X = gtx.Constraints.Max.X
-									h := gtx.Dp(unit.Dp(40))
-									gtx.Constraints.Min.Y = h
-									gtx.Constraints.Max.Y = h
-									return layout.UniformInset(unit.Dp(4)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-										rect := imageRect(gtx.Constraints.Max.X, h)
-										paintFill(gtx, colSurface, rect)
-										e := material.Editor(th, confirmEditor, "")
-										e.Color = colFg
-										e.HintColor = colHint
-										return e.Layout(gtx)
-									})
-								}),
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									size := gtx.Dp(unit.Dp(36))
-									gtx.Constraints.Min.X = size
-									gtx.Constraints.Max.X = size
-									gtx.Constraints.Min.Y = size
-									gtx.Constraints.Max.Y = size
-
-									return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-										return material.ProgressCircle(th, matchProgress).Layout(gtx)
-									})
-								}),
-							)
-						}),
-
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-											return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-													return layout.Inset{Left: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-														lbl := material.Body1(th, "Keyfiles")
-														lbl.Color = colFg
-														return layout.Inset{Right: unit.Dp(12)}.Layout(gtx, lbl.Layout)
-													})
-												}),
-												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-													cb := material.CheckBox(th, requireOrder, "Require correct order")
-													cb.Color = colFg
-													return layout.Inset{Right: unit.Dp(12)}.Layout(gtx, cb.Layout)
-												}),
-												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-													for orderKeyfiles.Clicked(gtx) {
-														currentView = ViewOrder
-													}
-
-													btn := material.Button(th, orderKeyfiles, "Order keyfiles")
-													btn.Background = colSurface
-													btn.Color = colFg
-													return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, btn.Layout)
-												}),
-												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-													for editKeyfiles.Clicked(gtx) {
-														defPath := ""
-														paths, err := zenity.SelectFileMultiple(
-															zenity.Filename(defPath),
-															zenity.FileFilter{"All files", []string{"*"}, true},
-														)
-														if err != nil {
-															if err == zenity.ErrCanceled {
-																continue
-															}
-															status.main = "Failed to open file chooser"
-															status.mainColor = RED
-															continue
-														}
-
-														state.keyfiles = append([]string(nil), paths...)
-														orderWorking = append([]string(nil), state.keyfiles...)
-
-														if len(state.keyfiles) == 0 {
-															status.keyfileLabel = "None selected"
-														} else if len(state.keyfiles) == 1 {
-															status.keyfileLabel = "Using 1 keyfile"
-														} else {
-															status.keyfileLabel = fmt.Sprintf("Using %d keyfiles", len(state.keyfiles))
-														}
-
-														orderUps = nil
-														orderDowns = nil
-														orderRemoves = nil
-														orderInited = false
-													}
-
-													btn := material.Button(th, editKeyfiles, "Edit")
-													btn.Background = colSurface
-													btn.Color = colFg
-													return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, btn.Layout)
-												}),
-												layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-													for createKeyfiles.Clicked(gtx) {
-														defName := "keyfile-" + strconv.Itoa(int(time.Now().Unix())) + ".bin"
-
-														file, err := zenity.SelectFileSave(
-															zenity.Filename(defName),
-															zenity.ConfirmOverwrite(),
-														)
-														if err != nil {
-															if err == zenity.ErrCanceled {
-																continue
-															}
-															status.main = "Failed to open save dialog"
-															status.mainColor = RED
-															continue
-														}
-														if file == "" {
-															continue
-														}
-
-														fout, err := os.Create(file)
-														if err != nil {
-															status.main = "Failed to create keyfile"
-															status.mainColor = RED
-															continue
-														}
-
-														data := make([]byte, 32)
-														if n, err := rand.Read(data); err != nil || n != 32 {
-															fout.Close()
-															panic(errors.New("fatal crypto/rand error"))
-														}
-
-														if n, err := fout.Write(data); err != nil || n != 32 {
-															fout.Close()
-															panic(errors.New("failed to write full keyfile"))
-														}
-
-														if err := fout.Close(); err != nil {
-															panic(err)
-														}
-
-														status.main = "Ready"
-														status.mainColor = WHITE
-													}
-
-													btn := material.Button(th, createKeyfiles, "Create")
-													btn.Background = colPrimary
-													btn.Color = colContrastFg
-													return btn.Layout(gtx)
-												}),
-												layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-													h := gtx.Dp(unit.Dp(36))
-													gtx.Constraints.Min.Y = h
-													gtx.Constraints.Max.Y = h
-													rect := imageRect(gtx.Constraints.Max.X, h)
-													paintFill(gtx, colSurfaceAlt, rect)
-													lbl := material.Body2(th, status.keyfileLabel)
-													lbl.Color = colHint
-													return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, lbl.Layout)
-												}),
-											)
-										}),
-									)
-								}),
-							)
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							lbl := material.Body1(th, "Comments")
-							lbl.Color = colFg
-							return layout.Inset{Left: unit.Dp(4), Top: unit.Dp(12), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								return lbl.Layout(gtx)
-							})
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							h := gtx.Dp(unit.Dp(120))
-							gtx.Constraints.Min.X = gtx.Constraints.Max.X
-							gtx.Constraints.Min.Y = h
-							gtx.Constraints.Max.Y = h
-							return layout.UniformInset(unit.Dp(4)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								rect := imageRect(gtx.Constraints.Max.X, h)
-								paintFill(gtx, colSurface, rect)
-
-								e := material.Editor(th, commentsEditor, "")
-								e.Color = colFg
-								e.Hint = "Note: comments are not encrypted!"
-								e.HintColor = colHint
-								return e.Layout(gtx)
-							})
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							lbl := material.Body1(th, "Advanced")
-							lbl.Color = colFg
-							return layout.Inset{Left: unit.Dp(4), Top: unit.Dp(12), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-								return lbl.Layout(gtx)
-							})
-						}),
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							for splitCycleBtn.Clicked(gtx) {
-								splitCycleIndex = (splitCycleIndex + 1) % 4
-							}
-
-							return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-											cb := material.CheckBox(th, paranoidChk, "Paranoid mode")
-											cb.Color = colFg
-											return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(12)}.Layout(gtx, cb.Layout)
-										}),
-										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-											cb := material.CheckBox(th, compressChk, "Compress files")
-											cb.Color = colFg
-											return layout.Inset{Right: unit.Dp(12)}.Layout(gtx, cb.Layout)
-										}),
-									)
-								}),
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-											cb := material.CheckBox(th, rsChk, "Reed-Solomon")
-											cb.Color = colFg
-											return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(12)}.Layout(gtx, cb.Layout)
-										}),
-										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-											cb := material.CheckBox(th, deleteChk, "Delete files")
-											cb.Color = colFg
-											return layout.Inset{Right: unit.Dp(12)}.Layout(gtx, cb.Layout)
-										}),
-									)
-								}),
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-											cb := material.CheckBox(th, deniabilityChk, "Deniability")
-											cb.Color = colFg
-											return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(12)}.Layout(gtx, cb.Layout)
-										}),
-										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-											cb := material.CheckBox(th, recursiveChk, "Recursively")
-											cb.Color = colFg
-											return layout.Inset{Right: unit.Dp(12)}.Layout(gtx, cb.Layout)
-										}),
-									)
-								}),
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-											cb := material.CheckBox(th, splitChk, "Split into chunks")
-											cb.Color = colFg
-											return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(8)}.Layout(gtx, cb.Layout)
-										}),
-										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-											w := gtx.Dp(unit.Dp(80))
-											h := gtx.Dp(unit.Dp(36))
-											gtx.Constraints.Min.X = w
-											gtx.Constraints.Max.X = w
-											gtx.Constraints.Min.Y = h
-											gtx.Constraints.Max.Y = h
-
-											txt := splitEditor.Text()
-											filtered := make([]rune, 0, len(txt))
-											for _, r := range txt {
-												if r >= '0' && r <= '9' {
-													filtered = append(filtered, r)
-												}
-											}
-											if string(filtered) != txt {
-												splitEditor.SetText(string(filtered))
-											}
-
-											return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-												rect := imageRect(gtx.Constraints.Max.X, h)
-												paintFill(gtx, colSurface, rect)
-												e := material.Editor(th, splitEditor, "")
-												e.Color = colFg
-												e.Hint = "0"
-												e.HintColor = colHint
-												return e.Layout(gtx)
-											})
-										}),
-										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-											w := gtx.Dp(unit.Dp(56))
-											h := gtx.Dp(unit.Dp(36))
-											gtx.Constraints.Min.X = w
-											gtx.Constraints.Max.X = w
-											gtx.Constraints.Min.Y = h
-											gtx.Constraints.Max.Y = h
-
-											label := splitUnits[splitCycleIndex]
-											btn := material.Button(th, splitCycleBtn, label)
-											btn.Background = colSecondary
-											btn.Color = colContrastFg
-											return btn.Layout(gtx)
-										}),
-									)
-								}),
-							)
-						}),
-
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									lbl := material.Body1(th, "Save output as")
-									lbl.Color = colFg
-									return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(12)}.Layout(gtx, lbl.Layout)
-								}),
-								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-									return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-										layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-											h := gtx.Dp(unit.Dp(36))
-											gtx.Constraints.Min.Y = h
-											gtx.Constraints.Max.Y = h
-
-											availW := gtx.Constraints.Max.X
-											child := gtx
-											child.Constraints.Min.X = 0
-											child.Constraints.Max.X = availW
-
-											rect := imageRect(availW, h)
-											paintFill(child, colSurface, rect)
-
-											lbl := material.Body2(th, state.outputFile)
-											lbl.Color = colFg
-											return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, lbl.Layout)
-										}),
-										layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-											w := gtx.Dp(unit.Dp(92))
-											h := gtx.Dp(unit.Dp(36))
-											gtx.Constraints.Min.X = w
-											gtx.Constraints.Max.X = w
-											gtx.Constraints.Min.Y = h
-											gtx.Constraints.Max.Y = h
-
-											for changeBtn.Clicked(gtx) {
-												startDir := ""
-												if len(state.onlyFiles) > 0 {
-													startDir = filepath.Dir(state.onlyFiles[0])
-												} else if len(state.onlyFolders) > 0 {
-													startDir = filepath.Dir(state.onlyFolders[0])
-												}
-
-												tmp := strings.TrimSuffix(filepath.Base(state.outputFile), ".pcv")
-												initName := strings.TrimSuffix(tmp, filepath.Ext(tmp))
-												if state.mode == "encrypt" && (len(state.allFiles) > 1 || len(state.onlyFolders) > 0 || state.compress) {
-													initName = "encrypted-" + strconv.Itoa(int(time.Now().Unix()))
-												}
-
-												options := []zenity.Option{
-													zenity.Filename(initName),
-													zenity.ConfirmOverwrite(),
-												}
-												if startDir != "" {
-													prevDir, _ := os.Getwd()
-													_ = os.Chdir(startDir)
-													defer os.Chdir(prevDir)
-												}
-
-												file, err := zenity.SelectFileSave(options...)
-												if err != nil {
-													if err == zenity.ErrCanceled {
-														continue
-													}
-													status.main = "Failed to open save dialog"
-													status.mainColor = RED
-													continue
-												}
-												if file == "" {
-													continue
-												}
-
-												base := strings.Split(filepath.Base(file), ".")[0]
-												file = filepath.Join(filepath.Dir(file), base)
-
-												if state.mode == "encrypt" {
-													if len(state.allFiles) > 1 || len(state.onlyFolders) > 0 || state.compress {
-														file += ".zip.pcv"
-													} else {
-														file += filepath.Ext(state.inputFile) + ".pcv"
-													}
-												} else {
-													if strings.HasSuffix(state.inputFile, ".zip.pcv") {
-														file += ".zip"
-													} else {
-														tmp2 := strings.TrimSuffix(filepath.Base(state.inputFile), ".pcv")
-														file += filepath.Ext(tmp2)
-													}
-												}
-
-												state.outputFile = file
-												status.main = "Ready"
-												status.mainColor = WHITE
-											}
-											btn := material.Button(th, changeBtn, "Change")
-											btn.Background = colSecondary
-											btn.Color = colContrastFg
-											return btn.Layout(gtx)
-										}),
-									)
-								}),
-							)
-
-						}),
-
-						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-							sideW := gtx.Dp(unit.Dp(92))
-							btnH := gtx.Dp(unit.Dp(40))
-
-							backClickable := selectFiles
-
-							for backClickable.Clicked(gtx) {
-								currentView = ViewStart
-							}
-							for clearBtn.Clicked(gtx) {
-								save := state.outputFile
-								state = WorkOptions{}
-								state.outputFile = save
-								passEditor.SetText("")
-								confirmEditor.SetText("")
-								commentsEditor.SetText("")
-								splitEditor.SetText("")
-								paranoidChk.Value = false
-								compressChk.Value = false
-								rsChk.Value = false
-								deleteChk.Value = false
-								deniabilityChk.Value = false
-								recursiveChk.Value = false
-								splitChk.Value = false
-								if requireOrder != nil {
-									requireOrder.Value = false
+					return material.List(th, encryptList).Layout(gtx, 1, func(gtx layout.Context, index int) layout.Dimensions {
+						return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								h := material.H4(th, "Encrypt")
+								h.Color = colFg
+								return layout.Inset{Bottom: unit.Dp(20)}.Layout(gtx, h.Layout)
+							}),
+							layout.Rigid(passwordHeader),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								pw := passEditor.Text()
+								score := 0
+								if pw != "" {
+									score = zxcvbn.PasswordStrength(pw, nil).Score
 								}
-								hidePass = true
-								passEditor.Mask = '*'
-								confirmEditor.Mask = '*'
-								splitCycleIndex = 0
-							}
-							for startBtn.Clicked(gtx) {
-								syncWidgetsToState()
-								mu.Lock()
-								status.working = true
-								status.showProgress = true
-								status.progress = 0
-								status.progressInfo = "Starting..."
-								mu.Unlock()
+								passwordScore = score
+								progress := scoreToProgress(score)
 
-								// Start button should be disabled if these conditions are true; don't do anything if so
-								if (len(state.keyfiles) == 0 && state.password == "") || (state.mode == "encrypt" && state.password != state.confirmPassword) {
-									continue
-								}
-
-								if state.keyfile && state.keyfiles == nil {
-									status.main = "Please select your keyfiles"
-									status.mainColor = RED
-									continue
-								}
-								tmp, err := strconv.Atoi(state.splitSize)
-								if state.split && (state.splitSize == "" || err != nil || tmp <= 0) {
-									status.main = "Invalid chunk size"
-									status.mainColor = RED
-									continue
-								}
-
-								// Check if output file already exists
-								_, err = os.Stat(state.outputFile)
-
-								// Check if any split chunks already exist
-								if state.split {
-									names, err2 := filepath.Glob(state.outputFile + ".*")
-									if err2 != nil {
-										panic(err2)
-									}
-									if len(names) > 0 {
-										err = nil
-									} else {
-										err = os.ErrNotExist
-									}
-								}
-
-								// If files already exist, show the overwrite modal
-								if err == nil && !state.recursively {
-									ok := zenity.Question("Outputfile already exists. Overwrite?",
-										zenity.Title("Question"),
-										zenity.QuestionIcon,
-									)
-									if ok != nil {
-										continue
-									}
-								}
-								status.showProgress = true
-								fastDecode = true
-								status.canCancel = true
-								currentView = ViewProgress
-								if !state.recursively {
-									go func() {
-										work()
-										status.working = false
-										status.showProgress = false
-										currentView = ViewStart
-
-									}()
-								} else {
-									// Store variables as they will be cleared
-									oldPassword := state.password
-									oldKeyfile := state.keyfile
-									oldKeyfiles := state.keyfiles
-									oldKeyfileOrdered := state.keyfileOrdered
-									oldKeyfileLabel := status.keyfileLabel
-									oldComments := state.comments
-									oldParanoid := state.paranoid
-									oldReedsolo := state.reedSolomon
-									oldDeniability := state.deniability
-									oldSplit := state.split
-									oldSplitSize := state.splitSize
-									oldSplitSelected := state.splitSelected
-									oldDelete := state.delete
-									files := state.allFiles
-									go func() {
-										for _, file := range files {
-											// Simulate dropping the file
-											onDrop([]string{file})
-
-											// Restore variables and options
-											state.password = oldPassword
-											state.confirmPassword = oldPassword
-											state.keyfile = oldKeyfile
-											state.keyfiles = oldKeyfiles
-											state.keyfileOrdered = oldKeyfileOrdered
-											status.keyfileLabel = oldKeyfileLabel
-											state.comments = oldComments
-											state.paranoid = oldParanoid
-											state.reedSolomon = oldReedsolo
-											if state.mode != "decrypt" {
-												state.deniability = oldDeniability
-											}
-											state.split = oldSplit
-											state.splitSize = oldSplitSize
-											state.splitSelected = oldSplitSelected
-											state.delete = oldDelete
-
-											work()
-											if !status.working {
-												resetUI()
-												cancel(nil, nil)
-												status.showProgress = false
-												currentView = ViewStart
-												continue
-											}
-										}
-										status.working = false
-										status.showProgress = false
-										currentView = ViewStart
-										w.Invalidate()
-									}()
-								}
-							}
-
-							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									gtx.Constraints.Min.X = sideW
-									gtx.Constraints.Max.X = sideW
-									gtx.Constraints.Min.Y = btnH
-									gtx.Constraints.Max.Y = btnH
-									btn := material.Button(th, backClickable, "Back")
-									btn.Background = colPrimary
-									btn.Color = colContrastFg
-									return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, btn.Layout)
-								}),
-								layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-									return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-										w := gtx.Dp(unit.Dp(160))
-										h := gtx.Dp(unit.Dp(52))
-										gtx.Constraints.Min.X = w
-										gtx.Constraints.Max.X = w
+								return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+									layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+										gtx.Constraints.Min.X = gtx.Constraints.Max.X
+										h := gtx.Dp(unit.Dp(40))
 										gtx.Constraints.Min.Y = h
 										gtx.Constraints.Max.Y = h
-										btn := material.Button(th, startBtn, "Start")
+										return layout.UniformInset(unit.Dp(4)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+											rect := imageRect(gtx.Constraints.Max.X, h)
+											paintFill(gtx, colSurface, rect)
+											e := material.Editor(th, passEditor, "")
+											e.Color = colFg
+											e.HintColor = colHint
+											return e.Layout(gtx)
+										})
+									}),
+
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										size := gtx.Dp(unit.Dp(36))
+										gtx.Constraints.Min.X = size
+										gtx.Constraints.Max.X = size
+										gtx.Constraints.Min.Y = size
+										gtx.Constraints.Max.Y = size
+
+										return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+											return material.ProgressCircle(th, progress).Layout(gtx)
+										})
+									}),
+								)
+							}),
+
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return layout.Spacer{Height: unit.Dp(12)}.Layout(gtx)
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								pw := passEditor.Text()
+								confirm := confirmEditor.Text()
+								match := (pw != "" && pw == confirm)
+
+								var matchProgress float32
+								if match {
+									matchProgress = 1.0
+								} else {
+									matchProgress = 0.0
+								}
+
+								return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+									layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+										gtx.Constraints.Min.X = gtx.Constraints.Max.X
+										h := gtx.Dp(unit.Dp(40))
+										gtx.Constraints.Min.Y = h
+										gtx.Constraints.Max.Y = h
+										return layout.UniformInset(unit.Dp(4)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+											rect := imageRect(gtx.Constraints.Max.X, h)
+											paintFill(gtx, colSurface, rect)
+											e := material.Editor(th, confirmEditor, "")
+											e.Color = colFg
+											e.HintColor = colHint
+											return e.Layout(gtx)
+										})
+									}),
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										size := gtx.Dp(unit.Dp(36))
+										gtx.Constraints.Min.X = size
+										gtx.Constraints.Max.X = size
+										gtx.Constraints.Min.Y = size
+										gtx.Constraints.Max.Y = size
+
+										return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+											return material.ProgressCircle(th, matchProgress).Layout(gtx)
+										})
+									}),
+								)
+							}),
+
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+												return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+													layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+														return layout.Inset{Left: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+															lbl := material.Body1(th, "Keyfiles")
+															lbl.Color = colFg
+															return layout.Inset{Right: unit.Dp(12)}.Layout(gtx, lbl.Layout)
+														})
+													}),
+													layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+														cb := material.CheckBox(th, requireOrder, "Require correct order")
+														cb.Color = colFg
+														return layout.Inset{Right: unit.Dp(12)}.Layout(gtx, cb.Layout)
+													}),
+													layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+														for orderKeyfiles.Clicked(gtx) {
+															currentView = ViewOrder
+														}
+
+														btn := material.Button(th, orderKeyfiles, "Order keyfiles")
+														btn.Background = colSurface
+														btn.Color = colFg
+														return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, btn.Layout)
+													}),
+													layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+														for editKeyfiles.Clicked(gtx) {
+															defPath := ""
+															paths, err := zenity.SelectFileMultiple(
+																zenity.Filename(defPath),
+																zenity.FileFilter{"All files", []string{"*"}, true},
+															)
+															if err != nil {
+																if err == zenity.ErrCanceled {
+																	continue
+																}
+																status.main = "Failed to open file chooser"
+																status.mainColor = RED
+																continue
+															}
+
+															state.keyfiles = append([]string(nil), paths...)
+															orderWorking = append([]string(nil), state.keyfiles...)
+
+															if len(state.keyfiles) == 0 {
+																status.keyfileLabel = "None selected"
+															} else if len(state.keyfiles) == 1 {
+																status.keyfileLabel = "Using 1 keyfile"
+															} else {
+																status.keyfileLabel = fmt.Sprintf("Using %d keyfiles", len(state.keyfiles))
+															}
+
+															orderUps = nil
+															orderDowns = nil
+															orderRemoves = nil
+															orderInited = false
+														}
+
+														btn := material.Button(th, editKeyfiles, "Edit")
+														btn.Background = colSurface
+														btn.Color = colFg
+														return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, btn.Layout)
+													}),
+													layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+														for createKeyfiles.Clicked(gtx) {
+															defName := "keyfile-" + strconv.Itoa(int(time.Now().Unix())) + ".bin"
+
+															file, err := zenity.SelectFileSave(
+																zenity.Filename(defName),
+																zenity.ConfirmOverwrite(),
+															)
+															if err != nil {
+																if err == zenity.ErrCanceled {
+																	continue
+																}
+																status.main = "Failed to open save dialog"
+																status.mainColor = RED
+																continue
+															}
+															if file == "" {
+																continue
+															}
+
+															fout, err := os.Create(file)
+															if err != nil {
+																status.main = "Failed to create keyfile"
+																status.mainColor = RED
+																continue
+															}
+
+															data := make([]byte, 32)
+															if n, err := rand.Read(data); err != nil || n != 32 {
+																fout.Close()
+																panic(errors.New("fatal crypto/rand error"))
+															}
+
+															if n, err := fout.Write(data); err != nil || n != 32 {
+																fout.Close()
+																panic(errors.New("failed to write full keyfile"))
+															}
+
+															if err := fout.Close(); err != nil {
+																panic(err)
+															}
+
+															status.main = "Ready"
+															status.mainColor = WHITE
+														}
+
+														btn := material.Button(th, createKeyfiles, "Create")
+														btn.Background = colPrimary
+														btn.Color = colContrastFg
+														return btn.Layout(gtx)
+													}),
+													layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+														h := gtx.Dp(unit.Dp(36))
+														gtx.Constraints.Min.Y = h
+														gtx.Constraints.Max.Y = h
+														rect := imageRect(gtx.Constraints.Max.X, h)
+														paintFill(gtx, colSurfaceAlt, rect)
+														lbl := material.Body2(th, status.keyfileLabel)
+														lbl.Color = colHint
+														return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, lbl.Layout)
+													}),
+												)
+											}),
+										)
+									}),
+								)
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								lbl := material.Body1(th, "Comments")
+								lbl.Color = colFg
+								return layout.Inset{Left: unit.Dp(4), Top: unit.Dp(12), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									return lbl.Layout(gtx)
+								})
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								h := gtx.Dp(unit.Dp(120))
+								gtx.Constraints.Min.X = gtx.Constraints.Max.X
+								gtx.Constraints.Min.Y = h
+								gtx.Constraints.Max.Y = h
+								return layout.UniformInset(unit.Dp(4)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									rect := imageRect(gtx.Constraints.Max.X, h)
+									paintFill(gtx, colSurface, rect)
+
+									e := material.Editor(th, commentsEditor, "")
+									e.Color = colFg
+									e.Hint = "Note: comments are not encrypted!"
+									e.HintColor = colHint
+									return e.Layout(gtx)
+								})
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								lbl := material.Body1(th, "Advanced")
+								lbl.Color = colFg
+								return layout.Inset{Left: unit.Dp(4), Top: unit.Dp(12), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+									return lbl.Layout(gtx)
+								})
+							}),
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								for splitCycleBtn.Clicked(gtx) {
+									splitCycleIndex = (splitCycleIndex + 1) % 4
+								}
+
+								return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+												cb := material.CheckBox(th, paranoidChk, "Paranoid mode")
+												cb.Color = colFg
+												return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(12)}.Layout(gtx, cb.Layout)
+											}),
+											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+												cb := material.CheckBox(th, compressChk, "Compress files")
+												cb.Color = colFg
+												return layout.Inset{Right: unit.Dp(12)}.Layout(gtx, cb.Layout)
+											}),
+										)
+									}),
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+												cb := material.CheckBox(th, rsChk, "Reed-Solomon")
+												cb.Color = colFg
+												return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(12)}.Layout(gtx, cb.Layout)
+											}),
+											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+												cb := material.CheckBox(th, deleteChk, "Delete files")
+												cb.Color = colFg
+												return layout.Inset{Right: unit.Dp(12)}.Layout(gtx, cb.Layout)
+											}),
+										)
+									}),
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+												cb := material.CheckBox(th, deniabilityChk, "Deniability")
+												cb.Color = colFg
+												return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(12)}.Layout(gtx, cb.Layout)
+											}),
+											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+												cb := material.CheckBox(th, recursiveChk, "Recursively")
+												cb.Color = colFg
+												return layout.Inset{Right: unit.Dp(12)}.Layout(gtx, cb.Layout)
+											}),
+										)
+									}),
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+												cb := material.CheckBox(th, splitChk, "Split into chunks")
+												cb.Color = colFg
+												return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(8)}.Layout(gtx, cb.Layout)
+											}),
+											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+												w := gtx.Dp(unit.Dp(80))
+												h := gtx.Dp(unit.Dp(36))
+												gtx.Constraints.Min.X = w
+												gtx.Constraints.Max.X = w
+												gtx.Constraints.Min.Y = h
+												gtx.Constraints.Max.Y = h
+
+												txt := splitEditor.Text()
+												filtered := make([]rune, 0, len(txt))
+												for _, r := range txt {
+													if r >= '0' && r <= '9' {
+														filtered = append(filtered, r)
+													}
+												}
+												if string(filtered) != txt {
+													splitEditor.SetText(string(filtered))
+												}
+
+												return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+													rect := imageRect(gtx.Constraints.Max.X, h)
+													paintFill(gtx, colSurface, rect)
+													e := material.Editor(th, splitEditor, "")
+													e.Color = colFg
+													e.Hint = "0"
+													e.HintColor = colHint
+													return e.Layout(gtx)
+												})
+											}),
+											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+												w := gtx.Dp(unit.Dp(56))
+												h := gtx.Dp(unit.Dp(36))
+												gtx.Constraints.Min.X = w
+												gtx.Constraints.Max.X = w
+												gtx.Constraints.Min.Y = h
+												gtx.Constraints.Max.Y = h
+
+												label := splitUnits[splitCycleIndex]
+												btn := material.Button(th, splitCycleBtn, label)
+												btn.Background = colSecondary
+												btn.Color = colContrastFg
+												return btn.Layout(gtx)
+											}),
+										)
+									}),
+								)
+							}),
+
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										lbl := material.Body1(th, "Save output as")
+										lbl.Color = colFg
+										return layout.Inset{Left: unit.Dp(4), Right: unit.Dp(12)}.Layout(gtx, lbl.Layout)
+									}),
+									layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+										return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+											layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+												h := gtx.Dp(unit.Dp(36))
+												gtx.Constraints.Min.Y = h
+												gtx.Constraints.Max.Y = h
+
+												availW := gtx.Constraints.Max.X
+												child := gtx
+												child.Constraints.Min.X = 0
+												child.Constraints.Max.X = availW
+
+												rect := imageRect(availW, h)
+												paintFill(child, colSurface, rect)
+
+												lbl := material.Body2(th, state.outputFile)
+												lbl.Color = colFg
+												return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, lbl.Layout)
+											}),
+											layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+												w := gtx.Dp(unit.Dp(92))
+												h := gtx.Dp(unit.Dp(36))
+												gtx.Constraints.Min.X = w
+												gtx.Constraints.Max.X = w
+												gtx.Constraints.Min.Y = h
+												gtx.Constraints.Max.Y = h
+
+												for changeBtn.Clicked(gtx) {
+													startDir := ""
+													if len(state.onlyFiles) > 0 {
+														startDir = filepath.Dir(state.onlyFiles[0])
+													} else if len(state.onlyFolders) > 0 {
+														startDir = filepath.Dir(state.onlyFolders[0])
+													}
+
+													tmp := strings.TrimSuffix(filepath.Base(state.outputFile), ".pcv")
+													initName := strings.TrimSuffix(tmp, filepath.Ext(tmp))
+													if state.mode == "encrypt" && (len(state.allFiles) > 1 || len(state.onlyFolders) > 0 || state.compress) {
+														initName = "encrypted-" + strconv.Itoa(int(time.Now().Unix()))
+													}
+
+													options := []zenity.Option{
+														zenity.Filename(initName),
+														zenity.ConfirmOverwrite(),
+													}
+													if startDir != "" {
+														prevDir, _ := os.Getwd()
+														_ = os.Chdir(startDir)
+														defer os.Chdir(prevDir)
+													}
+
+													file, err := zenity.SelectFileSave(options...)
+													if err != nil {
+														if err == zenity.ErrCanceled {
+															continue
+														}
+														status.main = "Failed to open save dialog"
+														status.mainColor = RED
+														continue
+													}
+													if file == "" {
+														continue
+													}
+
+													base := strings.Split(filepath.Base(file), ".")[0]
+													file = filepath.Join(filepath.Dir(file), base)
+
+													if state.mode == "encrypt" {
+														if len(state.allFiles) > 1 || len(state.onlyFolders) > 0 || state.compress {
+															file += ".zip.pcv"
+														} else {
+															file += filepath.Ext(state.inputFile) + ".pcv"
+														}
+													} else {
+														if strings.HasSuffix(state.inputFile, ".zip.pcv") {
+															file += ".zip"
+														} else {
+															tmp2 := strings.TrimSuffix(filepath.Base(state.inputFile), ".pcv")
+															file += filepath.Ext(tmp2)
+														}
+													}
+
+													state.outputFile = file
+													status.main = "Ready"
+													status.mainColor = WHITE
+												}
+												btn := material.Button(th, changeBtn, "Change")
+												btn.Background = colSecondary
+												btn.Color = colContrastFg
+												return btn.Layout(gtx)
+											}),
+										)
+									}),
+								)
+
+							}),
+
+							layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+								sideW := gtx.Dp(unit.Dp(92))
+								btnH := gtx.Dp(unit.Dp(40))
+
+								backClickable := selectFiles
+
+								for backClickable.Clicked(gtx) {
+									currentView = ViewStart
+								}
+								for clearBtn.Clicked(gtx) {
+									save := state.outputFile
+									state = WorkOptions{}
+									state.outputFile = save
+									passEditor.SetText("")
+									confirmEditor.SetText("")
+									commentsEditor.SetText("")
+									splitEditor.SetText("")
+									paranoidChk.Value = false
+									compressChk.Value = false
+									rsChk.Value = false
+									deleteChk.Value = false
+									deniabilityChk.Value = false
+									recursiveChk.Value = false
+									splitChk.Value = false
+									if requireOrder != nil {
+										requireOrder.Value = false
+									}
+									hidePass = true
+									passEditor.Mask = '*'
+									confirmEditor.Mask = '*'
+									splitCycleIndex = 0
+								}
+								for startBtn.Clicked(gtx) {
+									syncWidgetsToState()
+									mu.Lock()
+									status.working = true
+									status.showProgress = true
+									status.progress = 0
+									status.progressInfo = "Starting..."
+									mu.Unlock()
+
+									// Start button should be disabled if these conditions are true; don't do anything if so
+									if (len(state.keyfiles) == 0 && state.password == "") || (state.mode == "encrypt" && state.password != state.confirmPassword) {
+										continue
+									}
+
+									if state.keyfile && state.keyfiles == nil {
+										status.main = "Please select your keyfiles"
+										status.mainColor = RED
+										continue
+									}
+									tmp, err := strconv.Atoi(state.splitSize)
+									if state.split && (state.splitSize == "" || err != nil || tmp <= 0) {
+										status.main = "Invalid chunk size"
+										status.mainColor = RED
+										continue
+									}
+
+									// Check if output file already exists
+									_, err = os.Stat(state.outputFile)
+
+									// Check if any split chunks already exist
+									if state.split {
+										names, err2 := filepath.Glob(state.outputFile + ".*")
+										if err2 != nil {
+											panic(err2)
+										}
+										if len(names) > 0 {
+											err = nil
+										} else {
+											err = os.ErrNotExist
+										}
+									}
+
+									// If files already exist, show the overwrite modal
+									if err == nil && !state.recursively {
+										ok := zenity.Question("Outputfile already exists. Overwrite?",
+											zenity.Title("Question"),
+											zenity.QuestionIcon,
+										)
+										if ok != nil {
+											continue
+										}
+									}
+									status.showProgress = true
+									fastDecode = true
+									status.canCancel = true
+									currentView = ViewProgress
+									if !state.recursively {
+										go func() {
+											work()
+											status.working = false
+											status.showProgress = false
+											currentView = ViewStart
+
+										}()
+									} else {
+										// Store variables as they will be cleared
+										oldPassword := state.password
+										oldKeyfile := state.keyfile
+										oldKeyfiles := state.keyfiles
+										oldKeyfileOrdered := state.keyfileOrdered
+										oldKeyfileLabel := status.keyfileLabel
+										oldComments := state.comments
+										oldParanoid := state.paranoid
+										oldReedsolo := state.reedSolomon
+										oldDeniability := state.deniability
+										oldSplit := state.split
+										oldSplitSize := state.splitSize
+										oldSplitSelected := state.splitSelected
+										oldDelete := state.delete
+										files := state.allFiles
+										go func() {
+											for _, file := range files {
+												// Simulate dropping the file
+												onDrop([]string{file})
+
+												// Restore variables and options
+												state.password = oldPassword
+												state.confirmPassword = oldPassword
+												state.keyfile = oldKeyfile
+												state.keyfiles = oldKeyfiles
+												state.keyfileOrdered = oldKeyfileOrdered
+												status.keyfileLabel = oldKeyfileLabel
+												state.comments = oldComments
+												state.paranoid = oldParanoid
+												state.reedSolomon = oldReedsolo
+												if state.mode != "decrypt" {
+													state.deniability = oldDeniability
+												}
+												state.split = oldSplit
+												state.splitSize = oldSplitSize
+												state.splitSelected = oldSplitSelected
+												state.delete = oldDelete
+
+												work()
+												if !status.working {
+													resetUI()
+													cancel(nil, nil)
+													status.showProgress = false
+													currentView = ViewStart
+													continue
+												}
+											}
+											status.working = false
+											status.showProgress = false
+											currentView = ViewStart
+											w.Invalidate()
+										}()
+									}
+								}
+
+								return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										gtx.Constraints.Min.X = sideW
+										gtx.Constraints.Max.X = sideW
+										gtx.Constraints.Min.Y = btnH
+										gtx.Constraints.Max.Y = btnH
+										btn := material.Button(th, backClickable, "Back")
 										btn.Background = colPrimary
 										btn.Color = colContrastFg
-										return btn.Layout(gtx)
-									})
-								}),
-								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-									gtx.Constraints.Min.X = sideW
-									gtx.Constraints.Max.X = sideW
-									gtx.Constraints.Min.Y = btnH
-									gtx.Constraints.Max.Y = btnH
-									btn := material.Button(th, clearBtn, "Clear")
-									btn.Background = colSurface
-									btn.Color = colHint
-									return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, btn.Layout)
-								}),
-							)
-						}),
-					)
+										return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, btn.Layout)
+									}),
+									layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+										return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+											w := gtx.Dp(unit.Dp(160))
+											h := gtx.Dp(unit.Dp(52))
+											gtx.Constraints.Min.X = w
+											gtx.Constraints.Max.X = w
+											gtx.Constraints.Min.Y = h
+											gtx.Constraints.Max.Y = h
+											btn := material.Button(th, startBtn, "Start")
+											btn.Background = colPrimary
+											btn.Color = colContrastFg
+											return btn.Layout(gtx)
+										})
+									}),
+									layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+										gtx.Constraints.Min.X = sideW
+										gtx.Constraints.Max.X = sideW
+										gtx.Constraints.Min.Y = btnH
+										gtx.Constraints.Max.Y = btnH
+										btn := material.Button(th, clearBtn, "Clear")
+										btn.Background = colSurface
+										btn.Color = colHint
+										return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, btn.Layout)
+									}),
+								)
+							}),
+						)
+					})
 				})
 
 			case ViewGenerate:
@@ -963,6 +971,8 @@ func run(w *app.Window) error {
 						)
 					}
 
+
+					return material.List(th, generateList).Layout(gtx, 1, func(gtx layout.Context, index int) layout.Dimensions {
 					return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							h := material.H4(th, "Generate password")
@@ -1165,6 +1175,7 @@ func run(w *app.Window) error {
 							)
 						}),
 					)
+					})
 				})
 
 			case ViewOrder:
@@ -1429,6 +1440,7 @@ func run(w *app.Window) error {
 						)
 					}
 
+					return material.List(th, decryptList).Layout(gtx, 1, func(gtx layout.Context, index int) layout.Dimensions {
 					return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							h := material.H4(th, "Decrypt")
@@ -1874,6 +1886,7 @@ func run(w *app.Window) error {
 							)
 						}),
 					)
+					})
 				})
 			case ViewProgress:
 				layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
@@ -1885,6 +1898,7 @@ func run(w *app.Window) error {
 					p := status.progress
 					msg := status.popup
 
+					return material.List(th, progressList).Layout(gtx, 1, func(gtx layout.Context, index int) layout.Dimensions {
 					return layout.Flex{Axis: layout.Vertical, Alignment: layout.Middle}.Layout(gtx,
 						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 							h := material.H5(th, "Progress")
@@ -1935,6 +1949,7 @@ func run(w *app.Window) error {
 							return layout.Inset{Top: unit.Dp(12)}.Layout(gtx, lbl.Layout)
 						}),
 					)
+					})
 				})
 			}
 
