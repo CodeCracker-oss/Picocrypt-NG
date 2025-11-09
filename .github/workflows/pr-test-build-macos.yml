@@ -10,14 +10,14 @@ on:
 
 jobs:
   pr-test-build-macos:
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
     - uses: actions/checkout@v4
 
     - name: Setup Go
       uses: actions/setup-go@v5
       with:
-        go-version: '>=1.24'
+        go-version: '>=1.25'
         check-latest: true
         cache: false
 
